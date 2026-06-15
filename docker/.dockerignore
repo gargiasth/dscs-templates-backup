@@ -1,0 +1,10 @@
+# Secrets
+.env
+.env.*
+
+# Dev & Editor
+.vscode/
+.idea/
+
+# Tests
+dscs_templates_tests/
