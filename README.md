@@ -1,3 +1,4 @@
+
 # dscs_templates
 
 A config-driven GDC (Genomic Data Commons) data pipeline template built for the Data Science Client Services team at Orion Workspaces. Designed to be reusable across GDC programs and projects by editing a single configuration file.
