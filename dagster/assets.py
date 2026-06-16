@@ -1,15 +1,24 @@
 # assets.py
 ## Dagster asset definitions
-### Calls pipeline.py functions
+### Thin wiring layer — calls pipeline.py functions
+### To swap orchestration tools, replace this file only
 
-import pipeline
-from dagster import asset
 import pandas as pd
+from dagster import asset
+import pipeline
 
 
 @asset
 def setup():
     pipeline.run_setup()
+
+
+@asset(deps=["setup"])
+def bronze_landing():
+    from ingestion.fetch import fetch_default
+    default_hits = fetch_default()
+    pipeline.run_create_bronze_landing_table(default_hits)
+    return pipeline.run_bronze_landing()
 
 
 @asset(deps=["setup"])
@@ -19,6 +28,7 @@ def bronze_request_api() -> list[dict]:
 
 @asset(deps=["setup", "bronze_request_api"], group_name="bronze_layer")
 def bronze_cases(bronze_request_api: list[dict]) -> pd.DataFrame:
+    pipeline.run_create_bronze_tables()
     return pipeline.run_bronze_cases(bronze_request_api)
 
 
@@ -34,6 +44,7 @@ def bronze_slides(bronze_request_api: list[dict]) -> pd.DataFrame:
 
 @asset(deps=["bronze_cases"], group_name="silver_layer")
 def silver_cases() -> pd.DataFrame:
+    pipeline.run_create_silver_tables()
     return pipeline.run_silver_cases()
 
 
@@ -44,4 +55,5 @@ def silver_samples() -> pd.DataFrame:
 
 @asset(deps=["silver_cases", "silver_samples"], group_name="gold_layer")
 def gold_mastertable() -> pd.DataFrame:
+    pipeline.run_create_gold_tables()
     return pipeline.run_gold_mastertable()

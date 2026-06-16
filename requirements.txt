@@ -1,0 +1,24 @@
+# Orchestration
+dagster
+dagster-webserver
+
+# Data
+pandas
+requests
+sqlalchemy
+
+# Database backends
+duckdb
+duckdb-engine
+psycopg2-binary
+snowflake-sqlalchemy
+
+# Validation
+pandera
+
+# Visualization
+streamlit
+plotly
+
+# Environment
+python-dotenv

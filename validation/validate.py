@@ -1,65 +1,35 @@
 # validate.py
-## Schema and data validation functions
+## Schema and data validation functions using pandera
 ### Called between pipeline layers to catch data issues early
-### Raises ValueError if validation fails — pipeline stops immediately
+### Raises pandera.errors.SchemaError if validation fails — pipeline stops immediately
 
 import pandas as pd
+import pandera as pa
+from pandera import Column, DataFrameSchema, Check
+from sqlalchemy import String, Float
 
 
-def validate_columns(df: pd.DataFrame, schema: dict, layer: str) -> None:
+def _build_pandera_schema(schema: dict) -> DataFrameSchema:
     """
-    Checks that the DataFrame has all expected columns from the schema.
-    Raises ValueError if any columns are missing or unexpected.
+    Builds a pandera DataFrameSchema from a pipeline schema dict.
+    pk columns are set to nullable=False, all others nullable=True.
 
     Usage:
-        validate_columns(df, BRONZE_CASES_SCHEMA, "bronze_cases")
+        pandera_schema = _build_pandera_schema(SILVER_CASES_SCHEMA)
     """
-    expected = set(schema["columns"].keys())
-    actual   = set(df.columns)
-    missing  = expected - actual
-    extra    = actual - expected
+    pk  = schema["pk"]
+    columns = {}
 
-    if missing:
-        raise ValueError(f"{layer} — missing columns: {missing}")
-    if extra:
-        print(f"{layer} — extra columns not in schema (will be ignored): {extra}")
+    for col_name, col_type in schema["columns"].items():
+        is_pk     = (col_name == pk) or (isinstance(pk, list) and col_name in pk)
+        nullable  = not is_pk
 
+        if col_type == Float:
+            columns[col_name] = Column(float, nullable=nullable, coerce=True)
+        else:
+            columns[col_name] = Column(str, nullable=nullable, coerce=True)
 
-def validate_not_empty(df: pd.DataFrame, layer: str) -> None:
-    """
-    Checks that the DataFrame has at least one row.
-    Raises ValueError if empty.
-
-    Usage:
-        validate_not_empty(df, "bronze_cases")
-    """
-    if len(df) == 0:
-        raise ValueError(f"{layer} — DataFrame is empty")
-
-
-def validate_pk(df: pd.DataFrame, schema: dict, layer: str) -> None:
-    """
-    Checks that the primary key column has no nulls and no duplicates.
-    Skipped if schema has no pk defined (bronze tables).
-
-    Usage:
-        validate_pk(df, SILVER_CASES_SCHEMA, "silver_cases")
-    """
-    pk = schema["pk"]
-    if pk is None:
-        return
-
-    if isinstance(pk, list):
-        null_mask = df[pk].isnull().any(axis=1)
-        dupe_mask = df.duplicated(subset=pk)
-    else:
-        null_mask = df[pk].isnull()
-        dupe_mask = df[pk].duplicated()
-
-    if null_mask.any():
-        raise ValueError(f"{layer} — pk '{pk}' has {null_mask.sum()} null values")
-    if dupe_mask.any():
-        raise ValueError(f"{layer} — pk '{pk}' has {dupe_mask.sum()} duplicate values")
+    return DataFrameSchema(columns, strict=False)
 
 
 def validate_row_count(df: pd.DataFrame, min_rows: int, layer: str) -> None:
@@ -76,15 +46,25 @@ def validate_row_count(df: pd.DataFrame, min_rows: int, layer: str) -> None:
 
 def validate(df: pd.DataFrame, schema: dict, layer: str, min_rows: int = 1) -> None:
     """
-    Runs all validations for a given layer.
-    Call this before writing any DataFrame to the database.
+    Runs all validations for a given layer using pandera.
+    Checks row count, column presence, types and pk nullability.
 
     Usage:
         validate(df, BRONZE_CASES_SCHEMA, "bronze_cases")
         validate(df, SILVER_CASES_SCHEMA, "silver_cases", min_rows=500)
     """
-    validate_not_empty(df,            layer)
-    validate_columns(df,  schema,     layer)
-    validate_pk(df,       schema,     layer)
-    validate_row_count(df, min_rows,  layer)
-    print(f"{layer} — validation passed ({len(df)} rows)")
+    validate_row_count(df, min_rows, layer)
+
+    pandera_schema = _build_pandera_schema(schema)
+
+    try:
+        pandera_schema.validate(df)
+        print(f"{layer} — validation passed ({len(df)} rows)")
+    except pa.errors.SchemaError as e:
+        raise pa.errors.SchemaError(
+            schema=e.schema,
+            data=e.data,
+            message=f"{layer} — validation failed: {e.args[0]}",
+            failure_cases=e.failure_cases,
+            check=e.check,
+        )

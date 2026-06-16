@@ -1,6 +1,9 @@
-from dagster import Definitions, load_assets_from_modules
+# definitions.py
+## Dagster entry point
+### Loads all assets and exposes them to the Dagster UI
 
-from dscs_templates import assets  # noqa: TID252
+from dagster import Definitions, load_assets_from_modules
+from dagster import assets
 
 all_assets = load_assets_from_modules([assets])
 
