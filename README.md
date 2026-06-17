@@ -61,7 +61,6 @@ cp .env.example .env
 python run_pipeline.py
 ```
 
-Or run step by step via `testing_script.py`.
 
 **5. Start the Dagster UI**
 ```bash
