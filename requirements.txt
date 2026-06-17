@@ -22,3 +22,6 @@ plotly
 
 # Environment
 python-dotenv
+
+# Snowflake
+snowflake-sqlalchemy

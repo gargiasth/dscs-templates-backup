@@ -6,18 +6,21 @@
 import os
 from sqlalchemy import create_engine, Table, Column, MetaData, PrimaryKeyConstraint
 
+from dotenv import load_dotenv
+load_dotenv()
+
 
 # Project paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 
-ACTIVE_DATABASE = os.getenv("ACTIVE_DATABASE", "duckdb")
+ACTIVE_DATABASE = os.getenv("ACTIVE_DATABASE", "snowflake")
 
 if ACTIVE_DATABASE == "snowflake":
     try:
         from snowflake.sqlalchemy import URL  # type: ignore
-    except ImportError:
-        raise ImportError("snowflake-sqlalchemy is required. Add it to requirements.txt")
+    except ImportError as e:
+        raise e
     ACTIVE_ENGINE = create_engine(URL(
         account   = os.getenv("SNOWFLAKE_ACCOUNT"),
         user      = os.getenv("SNOWFLAKE_USER"),
@@ -27,6 +30,8 @@ if ACTIVE_DATABASE == "snowflake":
         warehouse = os.getenv("SNOWFLAKE_WAREHOUSE"),
         role      = os.getenv("SNOWFLAKE_ROLE"),
     ))
+    from spcs.schema_setup import create_schema # type: ignore
+    create_schema()
 
 elif ACTIVE_DATABASE == "postgres":
     ACTIVE_ENGINE = create_engine(

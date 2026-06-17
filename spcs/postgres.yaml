@@ -1,0 +1,18 @@
+spec:
+  containers:
+    - name: postgres
+      image: a0439390499571-xrc81538.registry.snowflakecomputing.com/gdc_clinical/tcga_brca/gdc_repo/postgres:15
+      env:
+        POSTGRES_USER: postgres_user
+        POSTGRES_PASSWORD: postgres_password
+        POSTGRES_DB: postgres_db
+      volumeMounts:
+        - name: pgdata
+          mountPath: /var/lib/postgresql/data
+  volumes:
+    - name: pgdata
+      source: local
+  endpoints:
+    - name: postgres
+      port: 5432
+      protocol: TCP

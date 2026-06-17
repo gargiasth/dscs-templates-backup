@@ -1,0 +1,25 @@
+spec:
+  containers:
+    - name: webserver
+      image: a0439390499571-xrc81538.registry.snowflakecomputing.com/gdc_clinical/tcga_brca/gdc_repo/webserver:latest
+      command:
+        - "dagster-webserver"
+        - "-h"
+        - "0.0.0.0"
+        - "-p"
+        - "3000"
+        - "-w"
+        - "/opt/dagster/dagster_home/workspace.yaml"
+      env:
+        DAGSTER_HOME: /opt/dagster/dagster_home
+        POSTGRES_USER: postgres_user
+        POSTGRES_PASSWORD: postgres_password
+        POSTGRES_DB: postgres_db
+        POSTGRES_HOST: postgres
+        POSTGRES_PORT: "5432"
+        ACTIVE_DATABASE: postgres
+  endpoints:
+    - name: dagster-ui
+      port: 3000
+      protocol: HTTP
+      public: true

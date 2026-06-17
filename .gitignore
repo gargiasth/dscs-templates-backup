@@ -38,3 +38,5 @@ history/
 .DS_Store
 Thumbs.db
 
+# Testing Scripts
+testing.py

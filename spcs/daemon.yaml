@@ -1,0 +1,17 @@
+spec:
+  containers:
+    - name: daemon
+      image: a0439390499571-xrc81538.registry.snowflakecomputing.com/gdc_clinical/tcga_brca/gdc_repo/daemon:latest
+      command:
+        - "dagster-daemon"
+        - "run"
+        - "-w"
+        - "/opt/dagster/dagster_home/workspace.yaml"
+      env:
+        DAGSTER_HOME: /opt/dagster/dagster_home
+        POSTGRES_USER: postgres_user
+        POSTGRES_PASSWORD: postgres_password
+        POSTGRES_DB: postgres_db
+        POSTGRES_HOST: postgres
+        POSTGRES_PORT: "5432"
+        ACTIVE_DATABASE: postgres
