@@ -1,7 +1,7 @@
 spec:
   containers:
     - name: postgres
-      image: a0439390499571-xrc81538.registry.snowflakecomputing.com/gdc_clinical/tcga_brca/gdc_repo/postgres:15
+      image: a0439390499571-xrc81538.registry.snowflakecomputing.com/gdc_clinical/tcga_brca/gdc_repo/postgres:latest
       env:
         POSTGRES_USER: postgres_user
         POSTGRES_PASSWORD: postgres_password

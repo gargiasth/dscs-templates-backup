@@ -1,6 +1,7 @@
 # Orchestration
 dagster
 dagster-webserver
+dagster-postgres
 
 # Data
 pandas

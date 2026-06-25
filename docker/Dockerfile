@@ -11,4 +11,3 @@ RUN pip install -e .
 ENV DAGSTER_HOME=/opt/dagster/dagster_home
 RUN mkdir -p $DAGSTER_HOME
 COPY docker/dagster.yaml $DAGSTER_HOME/dagster.yaml
-COPY docker/workspace.yaml $DAGSTER_HOME/workspace.yaml

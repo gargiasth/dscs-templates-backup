@@ -8,7 +8,7 @@ spec:
         - "0.0.0.0"
         - "-p"
         - "3000"
-        - "-w"
+        - "-m"
         - "/opt/dagster/dagster_home/workspace.yaml"
       env:
         DAGSTER_HOME: /opt/dagster/dagster_home

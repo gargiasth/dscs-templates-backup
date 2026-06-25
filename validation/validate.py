@@ -3,10 +3,13 @@
 ### Called between pipeline layers to catch data issues early
 ### Raises pandera.errors.SchemaError if validation fails — pipeline stops immediately
 
+import logging
 import pandas as pd
 import pandera as pa
 from pandera import Column, DataFrameSchema, Check
 from sqlalchemy import String, Float
+
+logger = logging.getLogger(__name__)
 
 
 def _build_pandera_schema(schema: dict) -> DataFrameSchema:
@@ -59,7 +62,7 @@ def validate(df: pd.DataFrame, schema: dict, layer: str, min_rows: int = 1) -> N
 
     try:
         pandera_schema.validate(df)
-        print(f"{layer} — validation passed ({len(df)} rows)")
+        logger.info(f"{layer} — validation passed ({len(df)} rows)")
     except pa.errors.SchemaError as e:
         raise pa.errors.SchemaError(
             schema=e.schema,

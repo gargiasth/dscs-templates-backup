@@ -4,7 +4,10 @@
 ### Chain join_tables() calls to build any multi-entity mastertable
 ### If joining more that 1 table, to be called as a nested function 
 
+import logging
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 def join_tables(
@@ -17,4 +20,5 @@ def join_tables(
     df.columns = df.columns.str.replace(r"_x$|_y$", "", regex=True)
     df = df.loc[:, ~df.columns.duplicated()]
     df = df.drop_duplicates(keep="last").reset_index(drop=True)
+    logger.info(f"join_tables — {len(left)} left + {len(right)} right → {len(df)} rows ({how} join on {on})")
     return df

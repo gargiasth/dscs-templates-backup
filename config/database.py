@@ -9,6 +9,9 @@ from sqlalchemy import create_engine, Table, Column, MetaData, PrimaryKeyConstra
 from dotenv import load_dotenv
 load_dotenv()
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 # Project paths
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,30 +22,39 @@ ACTIVE_DATABASE = os.getenv("ACTIVE_DATABASE", "snowflake")
 if ACTIVE_DATABASE == "snowflake":
     try:
         from snowflake.sqlalchemy import URL  # type: ignore
-    except ImportError as e:
-        raise e
-    ACTIVE_ENGINE = create_engine(URL(
-        account   = os.getenv("SNOWFLAKE_ACCOUNT"),
-        user      = os.getenv("SNOWFLAKE_USER"),
-        password  = os.getenv("SNOWFLAKE_PASSWORD"),
-        database  = os.getenv("SNOWFLAKE_DATABASE"),
-        schema    = os.getenv("SNOWFLAKE_SCHEMA"),
-        warehouse = os.getenv("SNOWFLAKE_WAREHOUSE"),
-        role      = os.getenv("SNOWFLAKE_ROLE"),
-    ))
-    from spcs.schema_setup import create_schema # type: ignore
-    create_schema()
+        ACTIVE_ENGINE = create_engine(URL(
+            account   = os.getenv("SNOWFLAKE_ACCOUNT"),
+            user      = os.getenv("SNOWFLAKE_USER"),
+            password  = os.getenv("SNOWFLAKE_PASSWORD"),
+            database  = os.getenv("SNOWFLAKE_DATABASE"),
+            schema    = os.getenv("SNOWFLAKE_SCHEMA"),
+            warehouse = os.getenv("SNOWFLAKE_WAREHOUSE"),
+            role      = os.getenv("SNOWFLAKE_ROLE"),
+        ))
+        from spcs.schema_setup import create_schema  # type: ignore
+        create_schema()
+    except Exception as e:
+        logger.error(f"Failed to initialize Snowflake engine: {e}")
+        raise
 
 elif ACTIVE_DATABASE == "postgres":
-    ACTIVE_ENGINE = create_engine(
-        f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
-        f"@{os.getenv('POSTGRES_HOST', 'postgres')}:{os.getenv('POSTGRES_PORT', '5432')}"
-        f"/{os.getenv('POSTGRES_DB')}"
-    )
+    try:
+        ACTIVE_ENGINE = create_engine(
+            f"postgresql://{os.getenv('POSTGRES_USER')}:{os.getenv('POSTGRES_PASSWORD')}"
+            f"@{os.getenv('POSTGRES_HOST', 'postgres')}:{os.getenv('POSTGRES_PORT', '5432')}"
+            f"/{os.getenv('POSTGRES_DB')}"
+        )
+    except Exception as e:
+        logger.error(f"Failed to initialize Postgres engine: {e}")
+        raise
 
 elif ACTIVE_DATABASE == "duckdb":
-    duckdb_file   = os.path.join("data", "gdc_pipeline.duckdb")
-    ACTIVE_ENGINE = create_engine(f"duckdb:///{duckdb_file}")
+    try:
+        duckdb_file   = os.path.join("data", "gdc_pipeline.duckdb")
+        ACTIVE_ENGINE = create_engine(f"duckdb:///{duckdb_file}")
+    except Exception as e:
+        logger.error(f"Failed to initialize DuckDB engine: {e}")
+        raise
 
 else:
     raise ValueError(f"Unknown ACTIVE_DATABASE: '{ACTIVE_DATABASE}'. Must be 'snowflake', 'postgres', or 'duckdb'.")
@@ -69,6 +81,10 @@ def create_table(name: str, schema: dict) -> None:
     Usage:
         create_table("bronze_cases", BRONZE_CASES_SCHEMA)
     """
-    table = _build_table(name, schema)
-    metadata.create_all(ACTIVE_ENGINE, tables=[table])
-    print(f"Created table {name} on {ACTIVE_DATABASE}")
+    try:
+        table = _build_table(name, schema)
+        metadata.create_all(ACTIVE_ENGINE, tables=[table])
+        logger.info(f"Created table {name} on {ACTIVE_DATABASE}")
+    except Exception as e:
+        logger.error(f"Failed to create table {name}: {e}")
+        raise

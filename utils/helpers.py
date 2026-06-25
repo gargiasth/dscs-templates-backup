@@ -4,7 +4,8 @@
 
 import os
 import pandas as pd
-
+import logging
+logger = logging.getLogger(__name__)
 
 def ensure_dirs(*paths: str) -> None:
 
@@ -18,7 +19,11 @@ def ensure_dirs(*paths: str) -> None:
     """
 
     for path in paths:
-        os.makedirs(path, exist_ok=True)
+        try:
+            os.makedirs(path, exist_ok=True)
+        except Exception as e:
+            logger.error(f"Failed to create directory {path}: {e}")
+            raise
 
 
 def write_df_to_table(
@@ -38,5 +43,9 @@ def write_df_to_table(
         write_df_to_table(df, "bronze_cases", ACTIVE_ENGINE, if_exists="replace")
     """
 
-    df.to_sql(table_name, engine, if_exists=if_exists, index=False)
-    print(f"Written {len(df)} rows to {table_name}")
+    try:
+        df.to_sql(table_name, engine, if_exists=if_exists, index=False)
+        logger.info(f"Written {len(df)} rows to {table_name}")
+    except Exception as e:
+        logger.error(f"Failed to write to {table_name}: {e}")
+        raise
