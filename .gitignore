@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Package build artifacts
+*.egg-info/
+dist/
+build/
+
+# Environment variables
+.env
+.env.*
+
+# Data
+data/
+*.duckdb
+*.csv
+*.parquet
+
+# Dagster
+logs/
+storage/
+history/
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Testing Scripts
+testing.py

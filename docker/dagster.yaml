@@ -1,0 +1,3 @@
+storage:
+  postgres:
+    postgres_url: "postgresql://postgres_user:postgres_password@postgres:5432/postgres_db"

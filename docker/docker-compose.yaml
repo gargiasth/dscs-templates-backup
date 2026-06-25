@@ -1,0 +1,62 @@
+# docker-compose.yml
+## Local development stack
+### Mirrors the SPCS deployment in docker/snowflake/
+
+services:
+
+  webserver:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command:
+      - "dagster-webserver"
+      - "-h"
+      - "0.0.0.0"
+      - "-p"
+      - "3000"
+      - "-w"
+      - "/opt/dagster/dagster_home/workspace.yaml"
+    ports:
+      - "3000:3000"
+    volumes:
+      - dagster_home:/opt/dagster/dagster_home
+    env_file:
+      - ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  daemon:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    command:
+      - "dagster-daemon"
+      - "run"
+      - "-w"
+      - "/opt/dagster/dagster_home/workspace.yaml"
+    volumes:
+      - dagster_home:/opt/dagster/dagster_home
+    env_file:
+      - ../.env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: postgres_user
+      POSTGRES_PASSWORD: postgres_password
+      POSTGRES_DB: postgres_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres_user -d postgres_db"]
+      interval: 10s
+      timeout: 8s
+      retries: 5
+
+volumes:
+  dagster_home:
+  postgres_data:
