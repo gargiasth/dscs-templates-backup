@@ -15,8 +15,10 @@ from pipeline import (
 )
 from ingestion.fetch import fetch_default
 
-# Setup
-run_setup()
+
+def main():
+    # Setup
+    run_setup()
 
 # Bronze landing
 print("\n--- Bronze Landing ---")
