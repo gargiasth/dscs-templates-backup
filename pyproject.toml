@@ -17,3 +17,7 @@ packages = [
     "dagster",
     "spcs",
 ]
+
+
+[tool.pytest.ini_options]
+filterwarnings = ["ignore::UserWarning"]
