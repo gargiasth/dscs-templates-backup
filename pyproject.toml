@@ -21,3 +21,4 @@ packages = [
 
 [tool.pytest.ini_options]
 filterwarnings = ["ignore::UserWarning"]
+addopts = "--cov=. --cov-fail-under=70"
