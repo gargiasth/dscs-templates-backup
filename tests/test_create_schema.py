@@ -52,12 +52,12 @@ def mock_engine(mock_conn):
 
 def _schema_does_not_exist(mock_conn):
     """Simulate the database reporting the schema is absent."""
-    mock_conn.execute.return_value.fetchone.return_value = None
+    mock_conn.execute.return_value.fetchone.return_value = 0
 
 
 def _schema_already_exists(mock_conn):
     """Simulate the database reporting the schema is present."""
-    mock_conn.execute.return_value.fetchone.return_value = ("my_schema",)
+    mock_conn.execute.return_value.fetchone.return_value = 1
 
 
 # ── Happy Path — schema does not exist (R1) ───────────────────────────────────
