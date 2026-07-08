@@ -40,24 +40,21 @@ def mock_conn():
 
 
 @pytest.fixture
-def mock_engine(mock_conn):
-    """MagicMock engine whose connect() context manager yields mock_conn."""
-    engine = MagicMock()
-    engine.connect.return_value.__enter__.return_value = mock_conn
-    engine.connect.return_value.__exit__.return_value = False
-    return engine
-
+def mock_conn():
+    conn = MagicMock()
+    conn.execute.return_value.scalar.return_value = 0  # default: schema does not exist
+    return conn
 
 # ── Helper: configure whether schema "exists" on the mock connection ──────────
 
 def _schema_does_not_exist(mock_conn):
     """Simulate the database reporting the schema is absent."""
-    mock_conn.execute.return_value.fetchone.return_value = 0
+    mock_conn.execute.return_value.scalar.return_value = 0
 
 
 def _schema_already_exists(mock_conn):
     """Simulate the database reporting the schema is present."""
-    mock_conn.execute.return_value.fetchone.return_value = 1
+    mock_conn.execute.return_value.scalar.return_value = 1
 
 
 # ── Happy Path — schema does not exist (R1) ───────────────────────────────────
