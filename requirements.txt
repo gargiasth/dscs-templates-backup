@@ -26,3 +26,7 @@ python-dotenv
 
 # Snowflake
 snowflake-sqlalchemy
+
+# Testing
+pytest
+pytest-cov
