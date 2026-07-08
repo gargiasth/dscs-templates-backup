@@ -35,15 +35,18 @@ def snowflake_env(monkeypatch):
 def mock_conn():
     """Bare MagicMock connection; configure fetchone per test to control branch."""
     conn = MagicMock()
-    conn.execute.return_value.fetchone.return_value = None  # default: schema does not exist
+    conn.execute.return_value.scalar.return_value = 0  # default: schema does not exist
     return conn
 
 
 @pytest.fixture
-def mock_conn():
-    conn = MagicMock()
-    conn.execute.return_value.scalar.return_value = 0  # default: schema does not exist
-    return conn
+def mock_engine(mock_conn):
+    """MagicMock engine whose connect() context manager yields mock_conn."""
+    engine = MagicMock()
+    engine.connect.return_value.__enter__.return_value = mock_conn
+    engine.connect.return_value.__exit__.return_value = False
+    return engine
+
 
 # ── Helper: configure whether schema "exists" on the mock connection ──────────
 
