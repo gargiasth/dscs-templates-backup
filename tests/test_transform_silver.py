@@ -113,7 +113,7 @@ def test_transform_silver_whitebox_replacement_is_pd_na_sentinel():
     # White box: replace uses pd.NA — not None, not np.nan
     df = pd.DataFrame({"col": ["Not Reported"]})
     result = transform_silver(df)
-    assert result.loc[0, "col"] is pd.NA
+    assert pd.isna(result.loc[0, "col"])
 
 
 def test_transform_silver_whitebox_case_sensitive_not_reported_uppercase_only():
