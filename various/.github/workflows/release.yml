@@ -1,0 +1,187 @@
+name: Create release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Semantic version to release, without the v prefix (for example, 1.2.3)"
+        required: true
+        type: string
+      model:
+        description: "OpenAI model ID"
+        required: true
+        default: gpt-4.1-mini
+        type: string
+      api_base_url:
+        description: "OpenAI-compatible API base URL"
+        required: true
+        default: https://api.openai.com/v1
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Validate release version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Version must follow Semantic Versioning, such as 1.2.3."
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release create "v$VERSION" \
+            --target "${{ github.sha }}" \
+            --title "v$VERSION" \
+            --generate-notes
+
+  manual-ui-test-cases:
+    name: Generate manual UI test cases
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build release-change context
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          tag="v$VERSION"
+          previous_tag="$(git tag --sort=-creatordate | awk -v current="$tag" '$0 != current { print; exit }')"
+
+          {
+            echo "# Repository"
+            echo "Name: $GITHUB_REPOSITORY"
+            echo "Release: $tag"
+            echo
+            echo "# Current repository tree"
+            git ls-files \
+              ':(exclude)**/.env*' ':(exclude)**/*.pem' ':(exclude)**/*.key'
+            echo
+            if [[ -n "$previous_tag" ]]; then
+              echo "# Changes since $previous_tag"
+              git log --format='- %h %s' "$previous_tag..$tag"
+              echo
+              echo "# Changed files"
+              git diff --name-status "$previous_tag..$tag"
+              echo
+              echo "# Diff"
+              git diff --unified=3 "$previous_tag..$tag" -- . \
+                ':(exclude)**/.env*' ':(exclude)**/*.pem' ':(exclude)**/*.key'
+            else
+              echo "# First release"
+              echo "No prior release tag exists. Review the current tracked source files."
+              echo
+              git ls-files \
+                ':(exclude)**/.env*' ':(exclude)**/*.pem' ':(exclude)**/*.key'
+            fi
+            echo
+            echo "# Current source excerpts"
+            while IFS= read -r file; do
+              case "$file" in
+                *.py|*.html|*.css|*.js|*.jsx|*.ts|*.tsx|*.json|*.yml|*.yaml|*.md)
+                  echo "## $file"
+                  git show "$tag:$file" 2>/dev/null || true
+                  echo
+                  ;;
+              esac
+            done < <(git ls-files)
+          } | python3 -c 'import sys; sys.stdout.write(sys.stdin.read(100000))' \
+            > /tmp/release-context.md
+
+      - name: Generate test cases with AI
+        env:
+          API_BASE_URL: ${{ inputs.api_base_url }}
+          MODEL: ${{ inputs.model }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          token = os.environ.get("OPENAI_API_KEY")
+          if not token:
+              raise SystemExit(
+                  "OPENAI_API_KEY is not configured. Add it as an Actions secret "
+                  "before running this workflow."
+              )
+          endpoint = f"{os.environ['API_BASE_URL'].rstrip('/')}/chat/completions"
+
+          with open("/tmp/release-context.md", encoding="utf-8") as context_file:
+              context = context_file.read()
+
+          prompt = f"""Generate a concise, actionable manual UI regression test plan for release v{os.environ["VERSION"]}.
+
+          Use the supplied repository and release-change context. Focus on user-visible behavior and changed user flows. Do not invent screens, APIs, or behavior not supported by the context. If no UI behavior is affected, explicitly say so and list only relevant smoke tests.
+
+          Return Markdown only, using this structure:
+          # Manual UI test cases — v{os.environ["VERSION"]}
+          ## Release summary
+          ## Test cases
+          For each case include: title, priority (P0/P1/P2), preconditions, numbered steps, expected result, and related changed files or commits.
+          ## Regression checks
+          ## Out of scope / assumptions
+
+          Repository and change context:
+          {context}"""
+
+          payload = json.dumps(
+              {
+                  "model": os.environ["MODEL"],
+                  "messages": [
+                      {
+                          "role": "system",
+                          "content": "You are a senior QA engineer specializing in manual UI testing.",
+                      },
+                      {"role": "user", "content": prompt},
+                  ],
+                  "temperature": 0.2,
+              }
+          ).encode()
+          request = urllib.request.Request(
+              endpoint,
+              data=payload,
+              headers={
+                  "Authorization": f"Bearer {token}",
+                  "Content-Type": "application/json",
+              },
+              method="POST",
+          )
+
+          try:
+              with urllib.request.urlopen(request, timeout=120) as response:
+                  result = json.load(response)
+          except urllib.error.HTTPError as error:
+              details = error.read().decode(errors="replace")
+              raise SystemExit(f"AI request failed ({error.code}): {details}") from error
+
+          content = result["choices"][0]["message"]["content"]
+          output_path = f"/tmp/manual-ui-test-cases-v{os.environ['VERSION']}.md"
+          with open(output_path, "w", encoding="utf-8") as output:
+              output.write(content.rstrip() + "\n")
+          PY
+
+      - name: Attach test cases to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          gh release upload "v$VERSION" "/tmp/manual-ui-test-cases-v$VERSION.md" --clobber
