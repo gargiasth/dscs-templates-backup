@@ -1,12 +1,3 @@
-
-# dscs_templates
-
-A collection of configurable pipeline templates for Orion Workspaces designed to help teams quickly configure, modernize, and migrate existing data pipelines across platforms.
-The repository provides reusable patterns for ingestion, validation, transformation, orchestration, and deployment so that data science and data engineering teams can move pipelines between local development, cloud platforms, data warehouses, lakehouse environments, and client-specific research systems with minimal refactoring.
-
-(The initial reference implementation includes a config-driven GDC Genomic Data Commons pipeline using a TCGA-BRCA example.)
-
-
 ## Overview
 
 This template implements a medallion architecture (Bronze → Silver → Gold) for ingesting and transforming clinical data from the GDC REST API. It ships with a working TCGA-BRCA example that scientists can use as a reference when configuring their own pipelines.
