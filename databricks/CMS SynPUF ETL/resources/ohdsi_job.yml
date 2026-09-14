@@ -1,0 +1,69 @@
+# OHDSI SynPUF Pipeline
+#
+# Orchestrates the end-to-end flow from raw CMS SynPUF data → OMOP CDM tables.
+# Tasks will be added incrementally as their implementations solidify.
+
+resources:
+  jobs:
+    ohdsi_pipeline:
+      name: "OHDSI SynPUF Pipeline"
+      description: >
+        Downloads SynPUF samples, loads OMOP Vocabulary, runs the OHDSI
+        Python ETL, and loads the resulting OMOP CSVs into the OMOP CDM
+        tables. Built on top of the upstream OHDSI ETL-CMS codebase.
+
+      # Serverless environment shared by all tasks
+      environments:
+        - environment_key: default_env
+          spec:
+            client: "3"
+            dependencies: ["sqlglot", "python-dotenv"]
+
+      tasks:
+        - task_key: download_synpuf_raw
+          environment_key: default_env
+          spark_python_task:
+            python_file: ../../src/scripts/get_synpuf_files.py
+            parameters:
+              - "${var.synpuf_volume_path}"
+              - "all"
+
+
+        - task_key: create_omop_tables
+          description: Create the 39 OMOP CDM v5 tables in the target schema
+          environment_key: default_env
+          spark_python_task:
+            python_file: ../ingestion/create_CDMv5_tables.py
+            parameters:
+              - "${var.catalog}"
+              - "${var.schema}"
+              - "${workspace.file_path}/src/SQL/create_CDMv5_tables.sql"
+
+
+        - task_key: run_python_etl
+          description: Transform raw SynPUF into OMOP CDM format
+          depends_on:
+            - task_key: create_omop_tables
+            - task_key: download_synpuf_raw
+          environment_key: default_env
+          spark_python_task:
+            python_file: ../etl_databricks/run_etl.py
+            parameters:
+              - "1"
+              - "${var.synpuf_volume_path}"
+              - "${var.vocab_volume_path}"
+              - "${var.etl_control_volume_path}"
+              - "${var.omop_output_volume_path}"   
+
+        - task_key: load_omop_output
+          description: Load ETL output CSVs into OMOP CDM tables
+          depends_on:
+            - task_key: run_python_etl
+          environment_key: default_env
+          spark_python_task:
+            python_file: ../ingestion/load_omop_output.py
+            parameters:
+              - "${var.catalog}"                    # 1
+              - "${var.schema}"                     # 2
+              - "${var.omop_output_volume_path}"    # 3
+              - "1"   

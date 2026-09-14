@@ -1,0 +1,63 @@
+# Databricks Asset Bundle for the OHDSI ETL-CMS pipeline on Databricks.
+#
+# This bundle sits alongside the upstream OHDSI ETL-CMS code (in ../scripts/,
+# ../python_etl/, ../SQL/) and only adds the orchestration layer:
+# Job/Pipeline definitions that call into the OHDSI code.
+#
+# See databricks/README.md for how to deploy.
+
+bundle:
+  name: etl_cms_ohdsi
+
+# Include the whole repo in what gets deployed, so Job tasks can reference
+# upstream OHDSI files (scripts/, python_etl/, SQL/) that live outside
+# this databricks/ folder.
+sync:
+  paths:
+    - ..
+
+include:
+  - resources/*.yml
+
+# Variables — declared here, values assigned per-target below.
+variables:
+  catalog:
+    description: Target Unity Catalog for OMOP CDM tables
+  schema:
+    description: Target schema within the catalog
+  vocab_volume_path:
+    description: Volume path containing the OMOP vocabulary CSVs
+  synpuf_volume_path:
+    description: Volume path containing raw SynPUF CSVs
+  omop_output_volume_path:
+    description: Volume path where the Python ETL will write OMOP CSVs
+  etl_control_volume_path:
+    description: Volume path where the ETL writes cross-sample state files
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://dbc-085b91a0-8021.cloud.databricks.com
+    variables:
+      catalog: etl_cms
+      schema: ohdsi_cdm
+      vocab_volume_path: /Volumes/etl_cms/ohdsi_raw/vocabulary
+      synpuf_volume_path: /Volumes/etl_cms/ohdsi_raw/synpuf
+      omop_output_volume_path: /Volumes/etl_cms/ohdsi_raw/omop_output
+      etl_control_volume_path: /Volumes/etl_cms/ohdsi_raw/etl_control
+
+  # prod:
+  #   mode: production
+  #   workspace:
+  #     host: https://dbc-085b91a0-8021.cloud.databricks.com
+  #     root_path: /Workspace/Users/gargi.asthana@axleinfo.com/.bundle/${bundle.name}/${bundle.target}
+  #   variables:
+  #     catalog: etl_cms
+  #     schema: ohdsi_cdm
+  #     vocab_volume_path: /Volumes/etl_cms/ohdsi_raw/vocabulary
+  #     synpuf_volume_path: /Volumes/etl_cms/ohdsi_raw/synpuf
+  #     omop_output_volume_path: /Volumes/etl_cms/ohdsi_raw/omop_output
+  #   permissions:
+  #     - user_name: gargi.asthana@axleinfo.com
+  #       level: CAN_MANAGE

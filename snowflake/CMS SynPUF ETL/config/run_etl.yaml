@@ -1,0 +1,20 @@
+# spcs/config/run_etl.yaml
+#
+# Reference copy only — not read from disk at runtime. The actual
+# spec text lives inside the run_etl_job stored procedure, which
+# substitutes <SAMPLE_NUMBER> with whatever value is passed to
+# CALL run_etl_job(n). Kept here so the deployment config (image
+# tag, env vars) has one human-readable place to review or copy from
+# when updating the procedure.
+spec:
+  containers:
+    - name: run-etl
+      image: a0439390499571-xrc81538.registry.snowflakecomputing.com/etl_cms/etl_cms_bronze/etl_cms_repo/etl-cms-image:latest
+      command: ["python", "/app/spcs/etl_snowflake/run_etl.py", "<SAMPLE_NUMBER>"]
+      env:
+        SNOWFLAKE_DATABASE: ETL_CMS
+        SNOWFLAKE_BRONZE_SCHEMA: ETL_CMS_BRONZE
+        SNOWFLAKE_SILVER_SCHEMA: ETL_CMS_SILVER
+        SNOWFLAKE_RAW_SYNPUF_STAGE: SYNPUF_RAW
+        SNOWFLAKE_VOCAB_STAGE: OMOP_VOCABULARY
+        SNOWFLAKE_ETL_OUTPUT_STAGE: ETL_OUTPUT

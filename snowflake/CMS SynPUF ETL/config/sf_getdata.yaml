@@ -1,0 +1,13 @@
+# Reference copy only — not read from disk at runtime. The actual
+# spec text lives inside the sf_getdata_job stored procedure, which
+# substitutes <SAMPLE_NUMBER> with whatever value is passed to
+# CALL sf_getdata_job(n).
+spec:
+  containers:
+    - name: sf-getdata
+      image: a0439390499571-xrc81538.registry.snowflakecomputing.com/etl_cms/etl_cms_bronze/etl_cms_repo/etl-cms-image:latest
+      command: ["python", "/app/spcs/ingestion/sf_getdata.py", "<SAMPLE_NUMBER>"]
+      env:
+        SNOWFLAKE_DATABASE: ETL_CMS
+        SNOWFLAKE_BRONZE_SCHEMA: ETL_CMS_BRONZE
+        SNOWFLAKE_RAW_SYNPUF_STAGE: SYNPUF_RAW
