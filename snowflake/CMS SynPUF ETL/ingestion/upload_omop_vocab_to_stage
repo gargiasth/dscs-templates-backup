@@ -1,0 +1,43 @@
+"""
+Upload the manually-downloaded OMOP vocabulary files to Snowflake.
+
+Athena has no public API (confirmed — see OHDSI's own forums), so this
+script doesn't fetch anything. It expects the vocabulary files to
+already be downloaded and extracted locally from athena.ohdsi.org, and
+only handles getting them into the stage from there.
+
+Usage:
+    python upload_vocab_to_stage.py
+"""
+import os
+import sys
+
+from dotenv import load_dotenv
+
+_snowflake_root = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
+sys.path.insert(0, _snowflake_root)
+
+from utils_snowflake.connection import get_connection, get_snowpark_session
+from utils_snowflake.upload_to_stage import upload_directory_to_stage
+
+if __name__ == "__main__":
+    load_dotenv()
+
+    database = os.environ["SNOWFLAKE_DATABASE"]
+    schema = os.environ["SNOWFLAKE_BRONZE_SCHEMA"]
+    stage = os.environ["SNOWFLAKE_VOCAB_STAGE"]
+    local_dir = os.environ["BASE_OMOP_INPUT_DIRECTORY"]
+
+    conn = get_connection()
+    try:
+        session = get_snowpark_session(conn)
+        session.sql(f"USE DATABASE {database}").collect()
+        session.sql(f"USE SCHEMA {schema}").collect()
+
+        n = upload_directory_to_stage(session, schema, stage, local_dir)
+
+        session.close()
+    finally:
+        conn.close()
+
+    print(f"Done — uploaded {n} files.")
