@@ -16,7 +16,7 @@ _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
 sys.path.insert(0, _repo_root)
 
 from pyspark.sql import SparkSession
-from utils_databricks.validate_output_schema import get_table_schema
+from utils_databricks import get_table_schema
 
 
 def parse_args():

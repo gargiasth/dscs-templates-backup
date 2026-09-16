@@ -13,12 +13,12 @@ import sys
 _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(sys.argv[0])))
 sys.path.insert(0, _repo_root)
 
-from utils_databricks.sql_translation import (
+from utils_databricks import (
     append_using_delta,
     is_unsupported,
     translate_postgres_to_databricks,
 )
-from utils_databricks.execute_sql_file import execute_sql_file
+from utils_databricks import execute_sql_file
 
 
 def parse_args():
