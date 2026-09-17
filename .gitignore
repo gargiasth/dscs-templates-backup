@@ -8,6 +8,7 @@ __pycache__/
 # Generated data — never commit raw pipeline output
 data_output/
 snowflake/CMS SynPUF ETL/data_output/
+src/CMS SynPUF ETL/python_etl/test_data/
 
 # Sync Repo ps1
 sync-repos.ps1
