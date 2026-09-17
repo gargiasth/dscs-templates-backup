@@ -1,5 +1,5 @@
 import os, os.path, subprocess
-from src.python_etl.constants import SYNPUF_FILE_TOKENS
+from python_etl.constants import SYNPUF_FILE_TOKENS
 ## Update print statements for Python3.x
 
 # -----------------------------------
