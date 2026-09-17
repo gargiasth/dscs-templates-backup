@@ -4,11 +4,11 @@ from collections import OrderedDict
 import argparse
 import dotenv
 import math
-from src.python_etl.constants import OMOP_CONSTANTS, OMOP_MAPPING_RECORD, BENEFICIARY_SUMMARY_RECORD, OMOP_CONCEPT_RECORD, OMOP_CONCEPT_RELATIONSHIP_RECORD
-from src.python_etl.utility_classes import Table_ID_Values
-from src.python_etl.beneficiary import Beneficiary
-from src.python_etl.FileControl import FileControl
-from src.python_etl.SynPufFiles import PrescriptionDrug, InpatientClaim, OutpatientClaim, CarrierClaim
+from constants import OMOP_CONSTANTS, OMOP_MAPPING_RECORD, BENEFICIARY_SUMMARY_RECORD, OMOP_CONCEPT_RECORD, OMOP_CONCEPT_RELATIONSHIP_RECORD
+from utility_classes import Table_ID_Values
+from beneficiary import Beneficiary
+from FileControl import FileControl
+from SynPufFiles import PrescriptionDrug, InpatientClaim, OutpatientClaim, CarrierClaim
 from datetime import date
 import calendar
 

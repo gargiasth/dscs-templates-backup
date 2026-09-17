@@ -1,8 +1,8 @@
-from src.python_etl.constants import BENEFICIARY_SUMMARY_RECORD
+from python_etl.constants import BENEFICIARY_SUMMARY_RECORD
 import calendar
 # from FileControl import FileControl, FileDescriptor
-from src.python_etl.SynPufFiles import PrescriptionDrug, InpatientClaim, OutpatientClaim, CarrierClaimLine, CarrierClaim
-from src.python_etl.constants import PRESCRIPTION_DRUG_RECORD, INPATIENT_CLAIMS_RECORD, OUTPATIENT_CLAIMS_RECORD, CARRIER_CLAIMS_RECORD, SYNPUF_FILE_TOKENS
+from python_etl.SynPufFiles import PrescriptionDrug, InpatientClaim, OutpatientClaim, CarrierClaimLine, CarrierClaim
+from python_etl.constants import PRESCRIPTION_DRUG_RECORD, INPATIENT_CLAIMS_RECORD, OUTPATIENT_CLAIMS_RECORD, CARRIER_CLAIMS_RECORD, SYNPUF_FILE_TOKENS
 
 # -----------------------------------
 # This class stores the beneficiary data for all years for one person

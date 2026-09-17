@@ -5,7 +5,7 @@
 spec:
   containers:
     - name: load-to-gold
-      image: a0439390499571-xrc81538.registry.snowflakecomputing.com/etl_cms/etl_cms_bronze/etl_cms_repo/etl-cms-image:latest
+      image: SNOWFLAKE_REGISTRY_PATH
       command: ["python", "/app/spcs/etl_snowflake/load_to_gold.py", "<SAMPLE_NUMBER>"]
       env:
         SNOWFLAKE_DATABASE: ETL_CMS
