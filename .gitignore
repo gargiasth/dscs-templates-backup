@@ -2,3 +2,6 @@
 __pycache__/
 .pytest_cache/
 *.py[cod]
+.cursor
+*node_modules/
+.DS_Store
