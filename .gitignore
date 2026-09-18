@@ -12,3 +12,13 @@ src/CMS SynPUF ETL/python_etl/test_data/
 
 # Sync Repo ps1
 sync-repos.ps1
+
+node_modules/
+*.zip
+.DS_Store
+
+# run outputs (keep recorded tests in tests/)
+test-results/
+playwright-report/
+test-executions.csv
+tests/.codegen-tmp-*.js

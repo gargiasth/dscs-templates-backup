@@ -49,7 +49,7 @@ From [`sql/001_governance.sql`](../sql/001_governance.sql) and [`sql/002_mock_co
 | Unregistered dataset | any `access_tier = 'unregistered'` | `flagged_for_review` |
 | Consent row-filter cohort | `governed.default.framingham_cohort` | Real accounts see **0 rows** unless a grant row is added (seed grants use fictional `@bdc-demo.org` emails) |
 
-> The demo seed grants `phs000298` to a specific account (`nina.mezu@axleinfo.com`). For a portable suite, seed one `granted` and one `denied` controlled dataset for **your** analyst/steward test accounts before running SUBMIT/QUEUE/API cases, or parameterize the dataset IDs.
+> The demo seed grants `phs000298` to a specific account (`DBC_PROFILE`). For a portable suite, seed one `granted` and one `denied` controlled dataset for **your** analyst/steward test accounts before running SUBMIT/QUEUE/API cases, or parameterize the dataset IDs.
 
 ### 0.4 Run isolation & cleanup
 

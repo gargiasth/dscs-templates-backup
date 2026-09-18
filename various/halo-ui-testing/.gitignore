@@ -1,0 +1,13 @@
+# installed dependencies
+node_modules/
+
+# run outputs (keep recorded tests in tests/)
+test-results/
+playwright-report/
+test-executions.csv
+tests/.codegen-tmp-*.js
+
+# OS / editor / Python
+.DS_Store
+__pycache__/
+*.pyc
