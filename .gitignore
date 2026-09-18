@@ -12,3 +12,8 @@ src/CMS SynPUF ETL/python_etl/test_data/
 
 # Sync Repo ps1
 sync-repos.ps1
+
+node_modules/
+*.zip
+.DS_Store
+
