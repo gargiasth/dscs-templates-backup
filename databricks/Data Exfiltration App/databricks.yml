@@ -1,0 +1,30 @@
+bundle:
+  name: dlp-demo
+
+resources:
+  apps:
+    app:
+      name: "dlp-demo"
+      description: "A Databricks App powered by AppKit"
+      source_code_path: ./
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: 69e7e6f0afe612c9
+            permission: CAN_USE
+      # On-behalf-of-user execution for permission-sensitive reads:
+      # *.obo.sql queries run with the end user's token so Unity Catalog
+      # grants and is_account_group_member() evaluate against the real user.
+      user_api_scopes:
+        - sql
+
+targets:
+  default:
+    default: true
+    workspace:
+      host: https://dbc-e2647759-e2ba.cloud.databricks.com
+      # Two local profiles (artdscs, nina.mezu@axleinfo.com) match this host.
+      # Pin one so auth resolution is unambiguous — without this the IDE
+      # extension's "Generate types" fails with "multiple profiles matched"
+      # (surfaced as "validation failed (exit code 1)").
+      profile: artdscs
