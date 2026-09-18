@@ -21,10 +21,10 @@ resources:
 targets:
   default:
     default: true
-    workspace:
-      host: https://dbc-e2647759-e2ba.cloud.databricks.com
-      # Two local profiles (artdscs, nina.mezu@axleinfo.com) match this host.
+    workspace: DBC_URL
+      host: 
+      # Two local profiles match this host.
       # Pin one so auth resolution is unambiguous — without this the IDE
       # extension's "Generate types" fails with "multiple profiles matched"
       # (surfaced as "validation failed (exit code 1)").
-      profile: artdscs
+    profile: DBC_PROFILES

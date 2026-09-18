@@ -265,7 +265,7 @@ ALTER TABLE governed.default.export_requests
 -- ---------------------------------------------------------------------------
 MERGE INTO governed.default.user_dbgap_permissions t
 USING (
-  SELECT 'nina.mezu@axleinfo.com' AS user_id,
+  SELECT 'DBC_PROFILE' AS user_id,
          'phs000298'              AS dataset_id,
          'c2'                     AS consent_group,
          'downloader'             AS role,
