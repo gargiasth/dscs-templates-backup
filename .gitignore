@@ -13,9 +13,11 @@ src/CMS SynPUF ETL/python_etl/test_data/
 # Sync Repo ps1
 sync-repos.ps1
 
+# Other ignored files
 node_modules/
 *.zip
 .DS_Store
+.cursor
 
 # run outputs (keep recorded tests in tests/)
 test-results/
