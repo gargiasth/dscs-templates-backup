@@ -1,0 +1,85 @@
+name: Playwright Tests
+
+# NOTE ON PLACEMENT
+# This workflow assumes the `databricks/` app directory is the repository root
+# (it has its own package.json, package-lock.json and .gitignore). If instead
+# this app is nested inside a larger monorepo, move this file to the repo-root
+# `.github/workflows/` and add a defaults block:
+#   defaults:
+#     run:
+#       working-directory: databricks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: playwright-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Always-on: no Databricks connectivity or secrets required. Verifies the
+  # specs compile/enumerate. Playwright's --list does NOT start the dev
+  # webServer or launch a browser.
+  # (Repo-wide `npm run lint` is intentionally not run here: it currently fails
+  # on pre-existing errors in server/server.ts, and the eslint config ignores
+  # tests/. Re-add a lint job once that debt is resolved.)
+  validate:
+    name: Compile specs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Compile & list Playwright specs
+        run: npx playwright test --list
+
+  # Headless end-to-end run against a DEPLOYED app. Skipped automatically unless
+  # the repository variable DLP_BASE_URL is set (so forks/PRs without access do
+  # not fail). Local `npm run dev` is not used in CI because the app requires a
+  # live SQL warehouse + Databricks auth (predev runs appkit sync + typegen).
+  e2e:
+    name: E2E (headless)
+    runs-on: ubuntu-latest
+    needs: validate
+    if: ${{ vars.DLP_BASE_URL != '' }}
+    env:
+      DLP_BASE_URL: ${{ vars.DLP_BASE_URL }}
+      DLP_GRANTED_DATASET: ${{ vars.DLP_GRANTED_DATASET }}
+      DLP_DENIED_DATASET: ${{ vars.DLP_DENIED_DATASET }}
+      DLP_OPEN_DATASET: ${{ vars.DLP_OPEN_DATASET }}
+      DLP_UNREGISTERED_DATASET: ${{ vars.DLP_UNREGISTERED_DATASET }}
+      DLP_RUN_ID: gha-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: Write authenticated storage states
+        env:
+          # Paste the contents of a captured storageState JSON into each secret:
+          #   npx playwright codegen "$DLP_BASE_URL" --save-storage=analyst.json
+          ANALYST_STORAGE: ${{ secrets.PLAYWRIGHT_ANALYST_STORAGE }}
+          STEWARD_STORAGE: ${{ secrets.PLAYWRIGHT_STEWARD_STORAGE }}
+        run: |
+          mkdir -p .auth
+          printf '%s' "$ANALYST_STORAGE" > .auth/analyst.json
+          printf '%s' "$STEWARD_STORAGE" > .auth/steward.json
+      - name: Run Playwright tests (headless)
+        run: npx playwright test
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14

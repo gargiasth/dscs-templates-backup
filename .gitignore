@@ -21,3 +21,14 @@ sync-repos.ps1
 snowflake-template/
 sandbox/
 utilities/test_output
+# Other ignored files
+node_modules/
+*.zip
+.DS_Store
+.cursor
+
+# run outputs (keep recorded tests in tests/)
+test-results/
+playwright-report/
+test-executions.csv
+tests/.codegen-tmp-*.js
