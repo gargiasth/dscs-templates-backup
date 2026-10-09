@@ -1,0 +1,10 @@
+python-dotenv
+snowflake-connector-python
+snowflake-snowpark-python
+sqlglot
+
+
+
+# Tests
+
+pytest

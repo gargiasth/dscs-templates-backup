@@ -12,3 +12,12 @@ src/CMS SynPUF ETL/python_etl/test_data/
 
 # Sync Repo ps1
 sync-repos.ps1
+
+# Virtual Environment
+.venv
+
+
+# Testing Phase
+snowflake-template/
+sandbox/
+utilities/test_output

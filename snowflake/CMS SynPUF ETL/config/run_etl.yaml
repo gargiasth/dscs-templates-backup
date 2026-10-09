@@ -6,6 +6,10 @@
 # CALL run_etl_job(n). Kept here so the deployment config (image
 # tag, env vars) has one human-readable place to review or copy from
 # when updating the procedure.
+procedure_name: run_etl_job
+compute_pool: etl_cms_pool
+async: true
+external_access_integrations: []
 spec:
   containers:
     - name: run-etl
@@ -18,3 +22,14 @@ spec:
         SNOWFLAKE_RAW_SYNPUF_STAGE: SYNPUF_RAW
         SNOWFLAKE_VOCAB_STAGE: OMOP_VOCABULARY
         SNOWFLAKE_ETL_OUTPUT_STAGE: ETL_OUTPUT
+
+      resources:
+        limits:
+          memory: "11Gi"
+          cpu = "5"
+        requests:
+          memory: "1Gi"
+          cpu: "1"
+
+
+      
