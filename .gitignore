@@ -21,3 +21,4 @@ sync-repos.ps1
 snowflake-template/
 sandbox/
 utilities/test_output
+snowflake/CMS SynPUF ETL/utils_snowflake/generate_procedure.py
