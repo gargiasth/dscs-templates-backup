@@ -1,0 +1,26 @@
+{
+  "name": "halo-ui-testing",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright UI tests driven from an Excel backlog. Point config.json at any web app.",
+  "scripts": {
+    "start": "streamlit run app/streamlit_app.py",
+    "setup": "npm install && npx playwright install chromium",
+    "generate": "node tools/generate-tests.js",
+    "record": "node tools/record-case.js",
+    "record-ui": "node tools/codegen-launcher.js",
+    "test": "playwright test",
+    "report": "playwright show-report",
+    "update-status": "node tools/update-backlog-status.js"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0"
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

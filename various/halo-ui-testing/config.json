@@ -1,0 +1,4 @@
+{
+  "appUrl": "https://portal.gdc.cancer.gov/",
+  "notes": "Paste the website you want to test into appUrl (include https://). The GDC Portal value shipped here is only an example. Saving App URL in the control panel updates this field. The APP_URL environment variable overrides this file."
+}

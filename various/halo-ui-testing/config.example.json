@@ -1,0 +1,4 @@
+{
+  "appUrl": "https://your-web-app.example/",
+  "notes": "Copy this file to config.json (or just edit config.json) and replace appUrl with the site you are testing."
+}
