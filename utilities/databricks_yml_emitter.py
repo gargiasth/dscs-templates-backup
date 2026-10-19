@@ -25,7 +25,7 @@ setup_logging()
 log = logging.getLogger(__name__)
 
 
-def build_databricks_yml(spec: dict) -> str:
+def build_databricks_yml(spec: dict, resources_dir: str) -> str:
     """Assemble the databricks.yml content from the Orion spec."""
 
     if "project" not in spec:
@@ -39,7 +39,7 @@ def build_databricks_yml(spec: dict) -> str:
     if variables:
         bundle["variables"] = variables
 
-    bundle["include"] = ["resources/*.yml"]
+    bundle["include"] = [f"{resources_dir}/*.yml"]
 
     workspace_url = spec.get("runtime", {}).get("workspace_url")
     if workspace_url:
@@ -59,6 +59,7 @@ if __name__ == "__main__":
     import sys
     import json
     from pathlib import Path
+    from utilities.compiler import RESOURCES_DIR
 
     if len(sys.argv) != 2:
         print("Usage: python -m utilities.databricks_yml_emitter <orion.json>", file=sys.stderr)
@@ -68,7 +69,7 @@ if __name__ == "__main__":
     spec = json.loads(Path(sys.argv[1]).read_text())
 
     print("building yml ...", flush=True)
-    yml = build_databricks_yml(spec)
+    yml = build_databricks_yml(spec, RESOURCES_DIR.as_posix())
 
     out_path = Path(__file__).parent / "test_output" / "databricks.yml"
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -35,7 +35,7 @@ def _available_variables(spec: dict) -> set[str]:
     return set((_collect_variables(spec) or {}).keys())
 
 
-def _build_task(file, params, path, layer, stage_name, env_key, deps):
+def _build_task(file, params, path, layer, stage_name, env_key, deps, wrapper_dir, wrapper_prefix):
     """One spark_python_task entry under resources.jobs.<project>.tasks."""
     stem = file.replace(".py", "")
     key  = _task_key(layer, stage_name, stem)
@@ -44,7 +44,7 @@ def _build_task(file, params, path, layer, stage_name, env_key, deps):
         "task_key":        key,
         "environment_key": env_key,
         "spark_python_task": {
-            "python_file": f"../utilities/wrappers/run_{key}.py",
+            "python_file": f"{wrapper_dir}/{wrapper_prefix}{key}.py",
             "parameters":  params,
         },
     }
@@ -53,7 +53,8 @@ def _build_task(file, params, path, layer, stage_name, env_key, deps):
     return task, key
 
 
-def _collect_tasks(spec: dict, env_key: str, available_vars: set[str]) -> list[dict]:
+def _collect_tasks(spec: dict, env_key: str, available_vars: set[str],
+                   wrapper_dir: str, wrapper_prefix: str) -> list[dict]:
     """Walk every stage and emit one task per download script and one per transform script.
 
     For each task, the destination subfolder path is auto-prepended to the parameters.
@@ -106,6 +107,8 @@ def _collect_tasks(spec: dict, env_key: str, available_vars: set[str]) -> list[d
                     stage_name = sname,
                     env_key    = env_key,
                     deps       = deps,
+                    wrapper_dir    = wrapper_dir,
+                    wrapper_prefix = wrapper_prefix,
                 )
                 tasks.append(task)
                 my_keys.append(key)
@@ -148,6 +151,8 @@ def _collect_tasks(spec: dict, env_key: str, available_vars: set[str]) -> list[d
                 stage_name = sname,
                 env_key    = env_key,
                 deps       = deps,
+                wrapper_dir    = wrapper_dir,
+                wrapper_prefix = wrapper_prefix,
             )
             tasks.append(task)
             my_keys.append(key)
@@ -157,7 +162,7 @@ def _collect_tasks(spec: dict, env_key: str, available_vars: set[str]) -> list[d
     return tasks
 
 
-def build_jobs_yml(spec: dict) -> str:
+def build_jobs_yml(spec: dict, wrapper_dir: str, wrapper_prefix: str) -> str:
     """Assemble resources/<project>_job.yml content from the Orion spec."""
 
     if "project" not in spec:
@@ -167,7 +172,7 @@ def build_jobs_yml(spec: dict) -> str:
 
     env_key = "default_env"
     available_vars = _available_variables(spec)
-    tasks = _collect_tasks(spec, env_key, available_vars)
+    tasks = _collect_tasks(spec, env_key, available_vars, wrapper_dir, wrapper_prefix)
 
     job = {
         "name": spec["project"],
@@ -191,7 +196,8 @@ if __name__ == "__main__":
     print("MAIN BLOCK STARTED", flush=True)
     import sys
     import json
-    from pathlib import Path
+    from pathlib import Path, PurePosixPath
+    from utilities.compiler import RESOURCES_DIR, WRAPPER_DIR, WRAPPER_PREFIX
 
     if len(sys.argv) != 2:
         print("Usage: python -m utilities.databricks_jobs_emitter <orion.json>", file=sys.stderr)
@@ -201,7 +207,8 @@ if __name__ == "__main__":
     spec = json.loads(Path(sys.argv[1]).read_text())
 
     print("building yml ...", flush=True)
-    yml = build_jobs_yml(spec)
+    wrapper_ref = PurePosixPath(*[".."] * len(RESOURCES_DIR.parts), *WRAPPER_DIR.parts).as_posix()
+    yml = build_jobs_yml(spec, wrapper_ref, WRAPPER_PREFIX)
 
     out_path = Path(__file__).parent / "test_output" / "resources" / "databricks_jobs.yml"
     out_path.parent.mkdir(parents=True, exist_ok=True)

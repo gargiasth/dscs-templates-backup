@@ -21,7 +21,7 @@ setup_logging()
 log = logging.getLogger(__name__)
 
 
-def produce_wrapper(stage: dict) -> str | None:
+def produce_wrapper(stage: dict, wrapper_depth: int) -> str | None:
     """Return wrapper source code for one stage, or None to skip."""
     entry = stage.get("entry_point")
     if not isinstance(entry, dict):
@@ -33,12 +33,14 @@ def produce_wrapper(stage: dict) -> str | None:
 
     file_name  = entry.get("file", script_path)
     stage_name = stage.get("name", "unnamed")
+    repo_root  = "Path(__file__)" + ".parent" * (wrapper_depth + 1)
 
     if file_name.endswith(".py"):
         return _PY_TEMPLATE.format(
             stage_name=stage_name,
             script_file=file_name,
             script_path=script_path,
+            repo_root=repo_root,
         )
 
     if file_name.endswith(".sql"):
@@ -46,20 +48,21 @@ def produce_wrapper(stage: dict) -> str | None:
             stage_name=stage_name,
             sql_file=file_name,
             sql_path=script_path,
+            repo_root=repo_root,
         )
 
     log.warning("stage %r: unsupported extension %r", stage_name, file_name)
     return None
 
 
-def write_all_wrappers(spec: dict, output_dir) -> list[Path]:
+def write_all_wrappers(spec: dict, output_dir, wrapper_prefix: str, wrapper_depth: int) -> list[Path]:
     """Write a wrapper for every stage. Returns the paths written."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     written = []
     for stage in spec.get("stages", []):
-        code = produce_wrapper(stage)
+        code = produce_wrapper(stage, wrapper_depth)
         if code is None:
             continue
 
@@ -68,7 +71,7 @@ def write_all_wrappers(spec: dict, output_dir) -> list[Path]:
             stage["name"],
             stage["entry_point"]["file"],
         )
-        path = output_dir / f"run_{task_key}.py"
+        path = output_dir / f"{wrapper_prefix}{task_key}.py"
         path.write_text(code, encoding="utf-8")
         written.append(path)
         log.info("wrote %s", path)
@@ -82,7 +85,7 @@ _PY_TEMPLATE = '''"""Wrapper for stage: {stage_name} — entry-point: {script_fi
 import subprocess, sys
 from pathlib import Path
 
-_REPO_ROOT = Path(__file__).parent.parent.parent
+_REPO_ROOT = {repo_root}
 _SCRIPT = _REPO_ROOT / "{script_path}"
 
 subprocess.run([sys.executable, str(_SCRIPT), *sys.argv[1:]], check=True)
@@ -96,7 +99,7 @@ from utilities.sql_read import read_sql_file
 from utilities.sql_translate import translate
 
 spark = SparkSession.builder.getOrCreate()
-_SQL_PATH = Path(__file__).parent.parent.parent / "{sql_path}"
+_SQL_PATH = {repo_root} / "{sql_path}"
 
 for item in translate(read_sql_file(_SQL_PATH), read="postgres", dialect="databricks"):
     if not item["unsupported_reason"]:
@@ -106,6 +109,7 @@ for item in translate(read_sql_file(_SQL_PATH), read="postgres", dialect="databr
 
 if __name__ == "__main__":
     import argparse
+    from utilities.compiler import WRAPPER_DIR, WRAPPER_PREFIX
 
     parser = argparse.ArgumentParser(description="Generate wrappers for an orion.json spec.")
     parser.add_argument("spec_path", help="Path to orion.json")
@@ -113,5 +117,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     spec = json.loads(Path(args.spec_path).read_text(encoding="utf-8"))
-    for p in write_all_wrappers(spec, Path(args.output_dir)):
+    for p in write_all_wrappers(spec, Path(args.output_dir), WRAPPER_PREFIX, len(WRAPPER_DIR.parts)):
         print(p)

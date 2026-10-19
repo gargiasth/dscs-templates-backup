@@ -18,12 +18,12 @@ Public entry point:
     compile_bundle(spec_path, output_dir) -> dict
 
 CLI usage:
-    python -m utilities.compiler <orion.json> <output_dir>
+    python -m utilities.compiler [orion.json] [output_dir]
 """
 
 import json
 import logging
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from utilities.logger import setup_logging
 from utilities.generate_wrapper import write_all_wrappers
@@ -34,9 +34,25 @@ setup_logging()
 log = logging.getLogger(__name__)
 
 
+# ── Paths ────────────────────────────────────────────────────────────────────
+# Inputs: defaults used when the caller doesn't pass spec_path / output_dir.
+DEFAULT_SPEC_PATH  = Path("tests/test_data/sample_OrionConfig.json")
+DEFAULT_OUTPUT_DIR = Path("tests/test_output")
+
+# Bundle layout: relative to output_dir.
+DATABRICKS_YML_NAME = "databricks.yml"
+RESOURCES_DIR       = Path("resources")
+JOBS_YML_NAME       = "databricks_jobs.yml"
+WRAPPER_DIR         = Path("utilities") / "wrappers"
+WRAPPER_PREFIX      = "run_"
+
+
 # ── Public API ───────────────────────────────────────────────────────────────
 
-def compile_bundle() -> dict:
+def compile_bundle(
+    spec_path: str | Path = DEFAULT_SPEC_PATH,
+    output_dir: str | Path = DEFAULT_OUTPUT_DIR,
+) -> dict:
     """Compile an orion.json spec into a Databricks bundle at output_dir.
 
     Produces this tree:
@@ -46,18 +62,18 @@ def compile_bundle() -> dict:
         │   └── databricks_jobs.yml
         └── utilities/
             └── wrappers/
-                ├── run_<stage>.py
+                ├── run_<task_key>.py
                 └── ...
 
     Returns a dict of paths written:
         {
-            "wrappers":      [Path, ...],
+            "wrappers":       [Path, ...],
             "databricks_yml": Path,
             "jobs_yml":       Path,
         }
     """
-    spec_path  = Path(r"tests\test_data\sample_OrionConfig.json")
-    output_dir = Path(r"tests\test_output")
+    spec_path  = Path(spec_path)
+    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
@@ -90,23 +106,30 @@ def compile_bundle() -> dict:
 # output_dir and knows where its own output goes.
 
 def _emit_wrappers(spec: dict, output_dir: Path) -> list[Path]:
-    wrapper_dir = output_dir / "utilities" / "wrappers"
-    written = write_all_wrappers(spec, wrapper_dir)
+    wrapper_dir = output_dir / WRAPPER_DIR
+    written = write_all_wrappers(
+        spec,
+        wrapper_dir,
+        wrapper_prefix=WRAPPER_PREFIX,
+        wrapper_depth=len(WRAPPER_DIR.parts),
+    )
     log.info("step 1: wrote %d wrapper(s) → %s", len(written), wrapper_dir)
     return written
 
 
 def _emit_databricks_yml(spec: dict, output_dir: Path) -> Path:
-    yml_content = build_databricks_yml(spec)
-    yml_path = output_dir / "databricks.yml"
+    yml_content = build_databricks_yml(spec, resources_dir=RESOURCES_DIR.as_posix())
+    yml_path = output_dir / DATABRICKS_YML_NAME
     yml_path.write_text(yml_content, encoding="utf-8")
     log.info("step 2: wrote %s", yml_path)
     return yml_path
 
 
 def _emit_jobs_yml(spec: dict, output_dir: Path) -> Path:
-    jobs_content = build_jobs_yml(spec)
-    jobs_path = output_dir / "resources" / "databricks_jobs.yml"
+    # Wrapper dir as seen from the jobs YAML, e.g. ../utilities/wrappers
+    wrapper_ref = PurePosixPath(*[".."] * len(RESOURCES_DIR.parts), *WRAPPER_DIR.parts).as_posix()
+    jobs_content = build_jobs_yml(spec, wrapper_dir=wrapper_ref, wrapper_prefix=WRAPPER_PREFIX)
+    jobs_path = output_dir / RESOURCES_DIR / JOBS_YML_NAME
     jobs_path.parent.mkdir(parents=True, exist_ok=True)
     jobs_path.write_text(jobs_content, encoding="utf-8")
     log.info("step 3: wrote %s", jobs_path)
@@ -124,14 +147,16 @@ if __name__ == "__main__":
     parser.add_argument(
         "spec_path",
         nargs="?",
-        default="utilities/test_data/sample_OrionConfig.json",
-        help="Path to orion.json (default: utilities/test_data/sample_OrionConfig.json)",
+        type=Path,
+        default=DEFAULT_SPEC_PATH,
+        help="Path to orion.json (default: %(default)s)",
     )
     parser.add_argument(
         "output_dir",
         nargs="?",
-        default="utilities/test_output",
-        help="Where to write the bundle (default: utilities/test_output)",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="Where to write the bundle (default: %(default)s)",
     )
     args = parser.parse_args()
 
