@@ -44,7 +44,7 @@ def _build_task(file, params, path, layer, stage_name, env_key, deps):
         "task_key":        key,
         "environment_key": env_key,
         "spark_python_task": {
-            "python_file": path,
+            "python_file": f"../utilities/wrappers/run_{key}.py",
             "parameters":  params,
         },
     }
