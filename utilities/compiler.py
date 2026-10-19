@@ -56,8 +56,8 @@ def compile_bundle() -> dict:
             "jobs_yml":       Path,
         }
     """
-    spec_path  = Path(r"C:\Users\GargiAsthana\OneDrive - Axle\Projects\Templates\dscs-templates\tests\test_data\sample_OrionConfig.json")
-    output_dir = Path(r"C:\Users\GargiAsthana\OneDrive - Axle\Projects\Templates\dscs-templates\tests\test_output")
+    spec_path  = Path(r"tests\test_data\sample_OrionConfig.json")
+    output_dir = Path(r"tests\test_output")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
