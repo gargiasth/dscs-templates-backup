@@ -26,7 +26,6 @@ node_modules/
 *.zip
 .DS_Store
 .cursor
-test_data/
 test_output/
 
 # run outputs (keep recorded tests in tests/)
