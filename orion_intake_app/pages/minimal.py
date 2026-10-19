@@ -8,6 +8,9 @@ Sections:
   4. Unity Catalog configuration
   5. Medallion layers (dynamic list)
 
+A `table_setup` stage is auto-prepended at build time when DDL files are
+selected in Section 4 — users don't configure it manually in Section 5.
+
 Run standalone:  streamlit run pages/minimal.py
 """
 
@@ -69,6 +72,66 @@ def default_layer(name, ltype):
         "script": [],
         "script_params": {},   # {script_filename: [param_string, ...]}
     }
+
+
+# ── Auto-generated setup stage ──────────────────────────────────────────────
+# When Section 4 has DDL files + detected tables, we prepend a `table_setup`
+# stage to the output spec. The user never configures this in Section 5 —
+# it's inferred from Section 4 and runs utilities/create_tables.py before
+# any pipeline stage.
+
+def build_table_setup_layer(ddl_files):
+    """Return a table_setup layer in INPUT shape — the same shape user-facing
+    layers in st.session_state.layers use.
+
+    The main build-spec loop converts it to output shape alongside bronze/
+    silver/gold, so there's one code path for all stages. No drift possible.
+
+    The DDL files passed as script parameters are the setup stage's contract
+    — the utility opens them and creates whatever tables they define. The
+    destination intentionally has no `tables` list.
+    """
+    return {
+        "name": "table_setup",
+        "type": "setup",
+        "sources": [],
+        "destination": {
+            "type": "tables",
+            "subfolder": "",
+            "tables": [],   # intentionally empty — DDL files are the contract
+        },
+        "script": ["create_tables.py"],
+        "script_paths": {
+            "create_tables.py": "utilities/create_tables.py",
+        },
+        "script_params": {
+            "create_tables.py": [
+                "${var.catalog}",
+                "${var.schema}",
+                *[f"sql/{f}" for f in ddl_files],
+            ],
+        },
+    }
+
+
+def inject_table_setup_dependency(input_layers):
+    """Give every table-writing layer an auto source from `table_setup`.
+
+    Operates on INPUT shape (st.session_state.layers), BEFORE the main loop
+    converts to output. Uses the input `type` key, not `data_upload_type`.
+    """
+    for layer in input_layers:
+        if layer["name"] == "table_setup":
+            continue
+        dest = layer.get("destination", {})
+        if dest.get("type") == "tables":
+            layer.setdefault("sources", [])
+            already_depends = any(
+                s.get("type") == "auto" and s.get("from") == "table_setup"
+                for s in layer["sources"]
+            )
+            if not already_depends:
+                layer["sources"].append({"type": "auto", "from": "table_setup"})
 
 
 def init_state():
@@ -318,7 +381,7 @@ def render():
 
     workspace_url = st.text_input(
         "Databricks workspace URL *",
-        placeholder="e.g. https://dbc-085b91a0-8021.cloud.databricks.com")
+        placeholder="e.g. https://dbc-1234.cloud.databricks.com")
 
     st.markdown("---")
 
@@ -365,6 +428,11 @@ def render():
             if st.session_state.gold_tables:
                 st.success(f"Detected {len(st.session_state.gold_tables)} table(s): "
                            + ", ".join(f"`{t}`" for t in st.session_state.gold_tables))
+                st.info(
+                    f"✓ A `table_setup` stage will be auto-generated to create these "
+                    f"{len(st.session_state.gold_tables)} table(s) from "
+                    f"{len(selected_sql)} DDL file(s), before any pipeline stage runs."
+                )
             elif selected_sql:
                 st.caption("No CREATE TABLE statements found in selected files.")
         else:
@@ -573,8 +641,19 @@ def render():
         for lang in selected_languages
     ]
 
+    # ── Prepend table_setup layer in INPUT shape, before the main loop ──
+    # The main loop then converts it to output shape alongside bronze/silver/
+    # gold, so there's one code path for all stages. No drift possible.
+    input_layers = list(st.session_state.layers)
+    if st.session_state.sql_files and st.session_state.gold_tables:
+        setup_layer = build_table_setup_layer(
+            ddl_files=list(st.session_state.sql_files.keys()),
+        )
+        input_layers = [setup_layer] + input_layers
+        inject_table_setup_dependency(input_layers)
+
     stages = []
-    for layer in st.session_state.layers:
+    for layer in input_layers:
         lname = layer["name"] or layer["type"]
 
         # build sources
@@ -615,28 +694,58 @@ def render():
                 "type":    "tables",
                 "catalog": default_or(uc_catalog, "catalog"),
                 "schema":  default_or(uc_schema, "schema"),
-                "tables":  default_or(dest.get("tables"), "tables"),
             }
+            # Setup layers define their tables via DDL files passed as script
+            # parameters, so no `tables` field here. Every other layer type
+            # must declare the specific tables it writes to — missing tables
+            # gets a sentinel so the user sees the gap.
+            if layer["type"] != "setup":
+                dest_out["tables"] = default_or(dest.get("tables"), "tables")
 
-        # transform scripts for this layer
-        params_map = layer.get("script_params", {})
-        script_out = default_or(
-            [
-                {
-                    "file":       s,
-                    "path":       f"src/{s}",
-                    "parameters": clean_params(params_map.get(s)),
+        # Entry-point script for this stage. One stage = one entry point.
+        # Preference order:
+        #   1. Layer's transform script (silver/gold with auto source)
+        #   2. Fallback: a single source script (bronze with one data-pull
+        #      script — that script IS the stage's work, so promote it)
+        # script_paths lets a layer override the default `src/<file>` path.
+        params_map  = layer.get("script_params", {})
+        paths_map   = layer.get("script_paths", {})
+        script_list = layer.get("script") or []
+
+        if script_list:
+            entry_file = script_list[0]
+            entry_point_out = {
+                "file":       entry_file,
+                "path":       paths_map.get(entry_file, f"src/{entry_file}"),
+                "parameters": clean_params(params_map.get(entry_file)),
+            }
+        else:
+            # Fall back to a source script if the stage has exactly one
+            # enabled script source with exactly one script.
+            enabled_script_sources = [
+                s for s in layer["sources"]
+                if s.get("type") == "script"
+                and s.get("enabled")
+                and s.get("scripts")
+            ]
+            if (len(enabled_script_sources) == 1
+                    and len(enabled_script_sources[0]["scripts"]) == 1):
+                source = enabled_script_sources[0]
+                entry_file = source["scripts"][0]
+                source_params = source.get("script_params", {}).get(entry_file, [])
+                entry_point_out = {
+                    "file":       entry_file,
+                    "path":       paths_map.get(entry_file, f"src/{entry_file}"),
+                    "parameters": clean_params(source_params),
                 }
-                for s in layer["script"]
-            ] if layer.get("script") else None,
-            "scripts"
-        )
+            else:
+                entry_point_out = "entry_point_default"
 
         stages.append({
             "name":        lname,
             "layer":       layer["type"],
             "sources":     src_out,
-            "scripts":     script_out,
+            "entry_point": entry_point_out,
             "destination": dest_out,
         })
 

@@ -1,0 +1,18 @@
+bundle:
+  name: etl-cms-ohdsi
+variables:
+  catalog:
+    default: etl_cms
+  schema:
+    default: ohdsi_cdm
+  volume:
+    default: ohdsi_volume
+  synpuf_raw_subfolder_path:
+    default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/synpuf_raw
+include:
+- resources/*.yml
+targets:
+  dev:
+    default: true
+    workspace:
+      host: https://dbc-085b91a0-8021.cloud.databricks.com

@@ -20,13 +20,14 @@ sync-repos.ps1
 # Testing Phase
 snowflake-template/
 sandbox/
-utilities/test_output
 snowflake/CMS SynPUF ETL/utils_snowflake/generate_procedure.py
 # Other ignored files
 node_modules/
 *.zip
 .DS_Store
 .cursor
+test_data/
+test_output/
 
 # run outputs (keep recorded tests in tests/)
 test-results/

@@ -1,0 +1,22 @@
+resources:
+  jobs:
+    etl-cms-ohdsi:
+      name: etl-cms-ohdsi
+      environments:
+      - environment_key: default_env
+        spec:
+          client: '3'
+          dependencies: []
+      tasks:
+      - task_key: bronze_table_setup_create_cdmv5_tables_sql
+        environment_key: default_env
+        spark_python_task:
+          python_file: ../utilities/wrappers/run_bronze_table_setup_create_cdmv5_tables_sql.py
+          parameters: []
+      - task_key: bronze_bronze_get_synpuf_files
+        environment_key: default_env
+        spark_python_task:
+          python_file: ../utilities/wrappers/run_bronze_bronze_get_synpuf_files.py
+          parameters:
+          - ${var.synpuf_raw_subfolder_path}
+          - all
