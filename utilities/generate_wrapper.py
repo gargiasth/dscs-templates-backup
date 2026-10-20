@@ -92,18 +92,26 @@ subprocess.run([sys.executable, str(_SCRIPT), *sys.argv[1:]], check=True)
 '''
 
 _SQL_TEMPLATE = '''"""Wrapper for stage: {stage_name} — entry-point: {sql_file}"""
+import sys
 from pathlib import Path
-from pyspark.sql import SparkSession
 
 from utilities.sql_read import read_sql_file
 from utilities.sql_translate import translate
+from utilities.sql_execute import execute_statements
 
-spark = SparkSession.builder.getOrCreate()
 _SQL_PATH = {repo_root} / "{sql_path}"
 
-for item in translate(read_sql_file(_SQL_PATH), read="postgres", dialect="databricks"):
-    if not item["unsupported_reason"]:
-        spark.sql(item["sql"])
+if len(sys.argv) < 3:
+    sys.exit("usage: <wrapper> <catalog> <schema>")
+catalog = sys.argv[1]
+schema  = sys.argv[2]
+
+results    = translate(read_sql_file(_SQL_PATH), read="postgres", dialect="databricks")
+statements = [item["sql"] for item in results if not item["unsupported_reason"]]
+
+summary = execute_statements(statements, catalog=catalog, schema=schema)
+if summary["failed"]:
+    sys.exit(1)
 '''
 
 

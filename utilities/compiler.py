@@ -4,18 +4,19 @@ Orion Launchpad — bundle compiler.
 Takes an orion.json spec, runs the generators and emitters in order,
 produces a working Databricks bundle in the output directory.
 
-Think of this like `gcc`: the compiler is the entry point, each step
+The compiler is the entry point, each step
 (wrapper generator, YAML emitters) is a stage that happens inside it.
 Users run one command and get a complete bundle.
 
 Order matters:
-    1. Wrappers first — the jobs YAML references them, so they must
+    1. Wrappers: the jobs YAML references them, so they must
        exist on disk before the YAML lands.
-    2. databricks.yml second — bundle metadata, no cross-references.
-    3. jobs YAML last — references wrappers by path.
+    2. databricks.yml: bundle metadata, no cross-references.
+    3. jobs YAML: references wrappers by path.
 
 Public entry point:
     compile_bundle(spec_path, output_dir) -> dict
+    (if spec_path and output_dir are not specified, it will use a default)
 
 CLI usage:
     python -m utilities.compiler [orion.json] [output_dir]
