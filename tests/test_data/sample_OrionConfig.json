@@ -112,13 +112,35 @@
         "file": "get_synpuf_files.py",
         "path": "src/CMS SynPUF ETL/scripts/get_synpuf_files.py",
         "parameters": [
-          "all"
+          "${var.synpuf_raw_subfolder_path}",
+          "1"
         ]
       },
       "destination": {
         "type": "volume"
       }
-    }
+    },
+
+  {
+    "name": "etl",
+    "layer": "silver",
+    "sources": [{"data_upload_type": "auto", "from": "bronze"}],
+    "entry_point": {
+      "file": "CMS_SynPuf_ETL_CDM_v5.py",
+      "path": "src/CMS_SynPuf_ETL_CDM_v5.py",
+      "parameters": [
+        "1",
+        "BASE_SYNPUF_INPUT_DIRECTORY=${var.synpuf_raw_subfolder_path}",
+        "BASE_OUTPUT_DIRECTORY=${var.etl_output_subfolder_path}",
+        "BASE_ETL_CONTROL_DIRECTORY=${var.etl_output_subfolder_path}/control",
+        "BASE_OMOP_INPUT_DIRECTORY=${var.omop_vocabulary_subfolder_path}",
+        "SYNPUF_DIR_FORMAT=DE_{0}"
+      ]
+    },
+    
+    "destination": {"type": "volume", "subfolder_name": "etl_output"}
+  }
+    
     
   ],
   "generated": "2026-10-15"

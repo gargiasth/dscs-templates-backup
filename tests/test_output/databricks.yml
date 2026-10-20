@@ -9,6 +9,8 @@ variables:
     default: ohdsi_volume
   synpuf_raw_subfolder_path:
     default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/synpuf_raw
+  etl_output_subfolder_path:
+    default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/etl_output
 include:
 - resources/*.yml
 targets:

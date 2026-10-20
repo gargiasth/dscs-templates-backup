@@ -12,11 +12,26 @@ resources:
         environment_key: default_env
         spark_python_task:
           python_file: ../utilities/wrappers/run_bronze_table_setup_create_cdmv5_tables_sql.py
-          parameters: []
-      - task_key: bronze_bronze_get_synpuf_files
+          parameters:
+          - ${var.catalog}
+          - ${var.schema}
+      - task_key: bronze_bronze_get_synpuf_files_py
         environment_key: default_env
         spark_python_task:
-          python_file: ../utilities/wrappers/run_bronze_bronze_get_synpuf_files.py
+          python_file: ../utilities/wrappers/run_bronze_bronze_get_synpuf_files_py.py
           parameters:
           - ${var.synpuf_raw_subfolder_path}
-          - all
+          - '1'
+      - task_key: silver_etl_cms_synpuf_etl_cdm_v5_py
+        environment_key: default_env
+        spark_python_task:
+          python_file: ../utilities/wrappers/run_silver_etl_cms_synpuf_etl_cdm_v5_py.py
+          parameters:
+          - '1'
+          - BASE_SYNPUF_INPUT_DIRECTORY=${var.synpuf_raw_subfolder_path}
+          - BASE_OUTPUT_DIRECTORY=${var.etl_output_subfolder_path}
+          - BASE_ETL_CONTROL_DIRECTORY=${var.etl_output_subfolder_path}/control
+          - BASE_OMOP_INPUT_DIRECTORY=${var.omop_vocabulary_subfolder_path}
+          - SYNPUF_DIR_FORMAT=DE_{0}
+        depends_on:
+        - task_key: bronze_bronze_get_synpuf_files_py

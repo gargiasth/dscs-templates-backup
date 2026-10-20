@@ -1,13 +1,21 @@
 """Wrapper for stage: table_setup — entry-point: create_CDMv5_tables.sql"""
+import sys
 from pathlib import Path
-from pyspark.sql import SparkSession
 
 from utilities.sql_read import read_sql_file
 from utilities.sql_translate import translate
+from utilities.sql_execute import execute_statements
 
-spark = SparkSession.builder.getOrCreate()
 _SQL_PATH = Path(__file__).parent.parent.parent / "tests/test_data/create_CDMv5_tables.sql"
 
-for item in translate(read_sql_file(_SQL_PATH), read="postgres", dialect="databricks"):
-    if not item["unsupported_reason"]:
-        spark.sql(item["sql"])
+if len(sys.argv) < 3:
+    sys.exit("usage: <wrapper> <catalog> <schema>")
+catalog = sys.argv[1]
+schema  = sys.argv[2]
+
+results    = translate(read_sql_file(_SQL_PATH), read="postgres", dialect="databricks")
+statements = [item["sql"] for item in results if not item["unsupported_reason"]]
+
+summary = execute_statements(statements, catalog=catalog, schema=schema)
+if summary["failed"]:
+    sys.exit(1)

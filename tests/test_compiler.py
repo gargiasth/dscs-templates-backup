@@ -127,7 +127,16 @@ class TestHappyPath:
         compile_bundle(minimal_spec_path, new_dir)
         assert new_dir.exists()
 
+    def test_every_task_points_at_an_existing_wrapper(self, minimal_spec_path, output_dir):
+        """Each task's python_file must resolve to a wrapper the compiler actually wrote."""
+        result = compile_bundle(minimal_spec_path, output_dir)
+        parsed = yaml.safe_load(result["jobs_yml"].read_text())
 
+        for task in parsed["resources"]["jobs"]["demo"]["tasks"]:
+            python_file = task["spark_python_task"]["python_file"]
+            wrapper = (result["jobs_yml"].parent / python_file).resolve()
+            assert wrapper.exists(), f"{task['task_key']} points at missing {wrapper}"
+            
 # ── Angry path ───────────────────────────────────────────────────────────────
 
 class TestAngryPath:
@@ -229,6 +238,8 @@ class TestDelinquentPath:
 
         result = compile_bundle(spec_path, output_dir)
         assert result["wrappers"] == []
+        parsed = yaml.safe_load(result["jobs_yml"].read_text())
+        assert parsed["resources"]["jobs"]["demo"]["tasks"] == []
 
 
 # ── Forgetful path ───────────────────────────────────────────────────────────

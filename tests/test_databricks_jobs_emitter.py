@@ -31,25 +31,21 @@ WRAPPER_PREFIX = "run_"
 
 @pytest.fixture
 def spec_one_task():
-    """Spec with a single custom_script source → one task."""
+    """One stage with an entry_point → one task."""
     return {
         "project": "demo",
         "unity_catalog": {"catalog": "c", "schema": "s", "volume": "v"},
         "stages": [{
             "name": "get_raw",
             "layer": "bronze",
-            "sources": [{
-                "data_upload_type": "custom_script",
-                "subfolder_name": "raw",
-                "scripts": [{"file": "fetch.py", "parameters": ["all"]}],
-            }],
+            "entry_point": {"file": "fetch.py", "path": "src/fetch.py", "parameters": ["all"]},
         }],
     }
 
 
 @pytest.fixture
 def spec_two_stages():
-    """Spec with bronze stage feeding silver via an auto source → tests dependency chain."""
+    """Bronze feeds silver via an auto source → tests the dependency chain."""
     return {
         "project": "demo",
         "unity_catalog": {"catalog": "c", "schema": "s", "volume": "v"},
@@ -57,17 +53,13 @@ def spec_two_stages():
             {
                 "name": "fetch",
                 "layer": "bronze",
-                "sources": [{
-                    "data_upload_type": "custom_script",
-                    "subfolder_name": "raw",
-                    "scripts": [{"file": "download.py", "parameters": []}],
-                }],
+                "entry_point": {"file": "download.py", "path": "src/download.py", "parameters": []},
             },
             {
                 "name": "transform",
                 "layer": "silver",
                 "sources": [{"data_upload_type": "auto", "from": "fetch"}],
-                "scripts": [{"file": "etl.py", "path": "src/etl.py", "parameters": []}],
+                "entry_point": {"file": "etl.py", "path": "src/etl.py", "parameters": ["1"]},
                 "destination": {"type": "volume", "subfolder_name": "clean"},
             },
         ],
@@ -83,7 +75,7 @@ def test_happy_path_single_task(spec_one_task):
     tasks = parsed["resources"]["jobs"]["demo"]["tasks"]
     assert len(tasks) == 1
     assert tasks[0]["spark_python_task"]["python_file"] == (
-        f"{WRAPPER_DIR}/{WRAPPER_PREFIX}bronze_get_raw_fetch.py"
+        f"{WRAPPER_DIR}/{WRAPPER_PREFIX}bronze_get_raw_fetch_py.py"
     )
 
 
@@ -94,7 +86,7 @@ def test_happy_path_two_stages_create_dependency_chain(spec_two_stages):
     tasks = parsed["resources"]["jobs"]["demo"]["tasks"]
 
     silver_task = next(t for t in tasks if t["task_key"].startswith("silver_"))
-    assert silver_task["depends_on"] == [{"task_key": "bronze_fetch_download"}]
+    assert silver_task["depends_on"] == [{"task_key": "bronze_fetch_download_py"}]
 
 
 # ANGRY PATH — missing required field raises ValueError.
@@ -109,18 +101,17 @@ def test_task_key_follows_layer_stage_file_convention(spec_one_task):
     """Convention: <layer>_<stage>_<script_stem>."""
     parsed = yaml.safe_load(build_jobs_yml(spec_one_task, WRAPPER_DIR, WRAPPER_PREFIX))
     tasks = parsed["resources"]["jobs"]["demo"]["tasks"]
-    assert tasks[0]["task_key"] == "bronze_get_raw_fetch"
+    assert tasks[0]["task_key"] == "bronze_get_raw_fetch_py"
 
 
-# HAPPY PATH — destination path is auto-prepended before user-provided params.
-def test_destination_path_is_auto_prepended_to_params(spec_two_stages):
-    """The destination subfolder var ref is auto-prepended before user-provided params."""
+# HAPPY PATH — parameters are passed through exactly as entered, nothing prepended.
+def test_parameters_passed_through_unchanged(spec_two_stages):
+    """entry_point.parameters reach the task unchanged."""
     parsed = yaml.safe_load(build_jobs_yml(spec_two_stages, WRAPPER_DIR, WRAPPER_PREFIX))
     tasks = parsed["resources"]["jobs"]["demo"]["tasks"]
 
     silver_task = next(t for t in tasks if t["task_key"].startswith("silver_"))
-    params = silver_task["spark_python_task"]["parameters"]
-    assert params[0] == "${var.clean_subfolder_path}"
+    assert silver_task["spark_python_task"]["parameters"] == ["1"]
 
 
 # HAPPY PATH — custom wrapper_dir and wrapper_prefix are respected in the output.
@@ -131,5 +122,20 @@ def test_custom_wrapper_dir_and_prefix(spec_one_task):
     )
     tasks = parsed["resources"]["jobs"]["demo"]["tasks"]
     assert tasks[0]["spark_python_task"]["python_file"] == (
-        "../lib/runners/exec_bronze_get_raw_fetch.py"
+        "../lib/runners/exec_bronze_get_raw_fetch_py.py"
     )
+
+# HAPPY PATH — .sql entry points get catalog and schema as their first two params.
+def test_sql_task_gets_catalog_and_schema():
+    """The SQL wrapper needs catalog/schema as argv[1] and argv[2]."""
+    spec = {
+        "project": "demo",
+        "stages": [{
+            "name": "setup",
+            "layer": "bronze",
+            "entry_point": {"file": "ddl.sql", "path": "ddl.sql", "parameters": []},
+        }],
+    }
+    parsed = yaml.safe_load(build_jobs_yml(spec, WRAPPER_DIR, WRAPPER_PREFIX))
+    params = parsed["resources"]["jobs"]["demo"]["tasks"][0]["spark_python_task"]["parameters"]
+    assert params == ["${var.catalog}", "${var.schema}"]
