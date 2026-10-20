@@ -82,13 +82,22 @@ def write_all_wrappers(spec: dict, output_dir, wrapper_prefix: str, wrapper_dept
 # ── Templates ────────────────────────────────────────────────────────────────
 
 _PY_TEMPLATE = '''"""Wrapper for stage: {stage_name} — entry-point: {script_file}"""
-import subprocess, sys
+import os, re, subprocess, sys
 from pathlib import Path
 
 _REPO_ROOT = {repo_root}
 _SCRIPT = _REPO_ROOT / "{script_path}"
 
-subprocess.run([sys.executable, str(_SCRIPT), *sys.argv[1:]], check=True)
+env  = dict(os.environ)
+args = []
+for a in sys.argv[1:]:
+    m = re.match(r"^([A-Z_][A-Z0-9_]*)=(.*)$", a)
+    if m:
+        env[m.group(1)] = m.group(2)
+    else:
+        args.append(a)
+
+subprocess.run([sys.executable, str(_SCRIPT), *args], env=env, check=True)
 '''
 
 _SQL_TEMPLATE = '''"""Wrapper for stage: {stage_name} — entry-point: {sql_file}"""
