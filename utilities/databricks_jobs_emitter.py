@@ -37,6 +37,9 @@ def _available_variables(spec: dict) -> set[str]:
 
 def _build_task(file, params, path, layer, stage_name, env_key, deps, wrapper_dir, wrapper_prefix):
     """One spark_python_task entry under resources.jobs.<project>.tasks."""
+    if file.endswith(".sql"):                                          
+        params = [_var_ref("catalog"), _var_ref("schema")] + params  
+
     key = _task_key(layer, stage_name, file)
 
     task = {
