@@ -22,9 +22,10 @@ def _var_ref(name: str) -> str:
     return "${var." + name + "}"
 
 
-def _volume_path(uc: dict, subfolder: str) -> str:
-    """Compose a Unity Catalog volume path from the UC block + subfolder name."""
-    return f"/Volumes/{uc['catalog']}/{uc['schema']}/{uc['volume']}/{subfolder}"
+def _volume_path(uc: dict, subfolder: str, volume: str | None = None) -> str:
+    """Compose a Unity Catalog volume path from the UC block + subfolder name.
+    `volume` overrides the default volume, for folders that live in another one."""
+    return f"/Volumes/{uc['catalog']}/{uc['schema']}/{volume or uc['volume']}/{subfolder}"
 
 
 def _task_key(layer: str, stage_name: str, identifier: str) -> str:
@@ -48,6 +49,19 @@ def _collect_variables(spec: dict) -> dict:
         if uc.get(key):
             variables[key] = {"default": uc[key]}
 
+    # Folders declared up front in the intake (unity_catalog.folders).
+    # Each one may live in its own volume. Remember which, so a stage that
+    # uses the same folder name gets the same path.
+    folder_volume = {}
+    for folder in uc.get("folders") or []:
+        sub = (folder.get("subfolder") or "").strip()
+        vol = (folder.get("volume") or "").strip()
+        if sub and vol:
+            folder_volume[sub] = vol
+            variables[f"{_var_safe(sub)}_subfolder_path"] = {
+                "default": _volume_path(uc, sub, vol)
+            }
+
     for stage in spec.get("stages", []):
         sname = stage.get("name", "")
 
@@ -57,7 +71,7 @@ def _collect_variables(spec: dict) -> dict:
                 sub = src.get("subfolder_name")
                 if sub:
                     variables[f"{_var_safe(sub)}_subfolder_path"] = {
-                        "default": _volume_path(uc, sub)
+                        "default": _volume_path(uc, sub, folder_volume.get(sub))
                     }
 
         # Destination subfolder (volume type only)
@@ -66,7 +80,7 @@ def _collect_variables(spec: dict) -> dict:
             sub = dest.get("subfolder_name")
             if sub:
                 variables[f"{_var_safe(sub)}_subfolder_path"] = {
-                    "default": _volume_path(uc, sub)
+                    "default": _volume_path(uc, sub, folder_volume.get(sub))
                 }
 
         # Scripts stay stage-prefixed (same script name may appear in two stages)
