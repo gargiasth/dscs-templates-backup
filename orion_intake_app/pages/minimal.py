@@ -8,8 +8,8 @@ Sections:
   4. Unity Catalog configuration
   5. Medallion layers (dynamic list)
 
-A `table_setup` stage is auto-prepended at build time when DDL files are
-selected in Section 4 — users don't configure it manually in Section 5.
+Every layer (including the auto-generated table setup stages) is drawn by
+render_layer() and converted by layer_to_stage(), so all layers share one format.
 
 Run standalone:  streamlit run pages/minimal.py
 """
@@ -17,6 +17,7 @@ Run standalone:  streamlit run pages/minimal.py
 import io
 import re
 import json
+import uuid
 import zipfile
 from datetime import date
 
@@ -63,144 +64,127 @@ def parse_table_names(sql_bytes):
                       text, re.IGNORECASE)
 
 
-def default_layer(name, ltype):
+def new_layer(name, ltype, upstream_id=None):
+    """A layer in the single format every layer uses (bronze, silver, gold, custom)."""
     return {
-        "name": name,
-        "type": ltype,
-        "sources": [],
-        "destination": {"type": "volume", "subfolder": "", "tables": []},
-        "script": [],
-        "script_params": {},   # {script_filename: [param_string, ...]}
+        "id":          uuid.uuid4().hex[:8],   # stable id: upstream links survive renames
+        "name":        name,
+        "type":        ltype,
+        "inputs":      ([{"id": uuid.uuid4().hex[:8], "kind": "upstream", "layer_id": upstream_id}]
+                        if upstream_id else []),
+        "entry":       "",                     # the ONE script this layer runs
+        "params":      [],
+        "destination": {"type": "tables" if ltype == "gold" else "volume",
+                        "subfolder": "", "tables": []},
     }
 
 
-# ── Auto-generated setup stage ──────────────────────────────────────────────
-# When Section 4 has DDL files + detected tables, we prepend a `table_setup`
-# stage to the output spec. The user never configures this in Section 5 —
-# it's inferred from Section 4 and runs utilities/create_tables.py before
-# any pipeline stage.
+# ── Table setup stages ──────────────────────────────────────────────────────
+# One setup stage per DDL file selected in Section 4. It uses the same layer
+# format as everything else, with the entry point script, parameters and destination
+# filled in and locked. Only its name and layer type are editable.
 
-def build_table_setup_layer(ddl_files):
-    """Return a table_setup layer in INPUT shape — the same shape user-facing
-    layers in st.session_state.layers use.
+def setup_stage_default_name(ddl_file, n_files):
+    stem = ddl_file.rsplit(".", 1)[0]
+    return "table_setup" if n_files == 1 else f"table_setup_{var_safe(stem)}"
 
-    The main build-spec loop converts it to output shape alongside bronze/
-    silver/gold, so there's one code path for all stages. No drift possible.
 
-    The DDL files passed as script parameters are the setup stage's contract
-    — the utility opens them and creates whatever tables they define. The
-    destination intentionally has no `tables` list.
-    """
+def setup_layer(ddl_file, cfg):
     return {
-        "name": "table_setup",
-        "type": "setup",
-        "sources": [],
-        "destination": {
-            "type": "tables",
-            "subfolder": "",
-            "tables": [],   # intentionally empty — DDL files are the contract
-        },
-        "script": ["create_tables.py"],
-        "script_paths": {
-            "create_tables.py": "utilities/create_tables.py",
-        },
-        "script_params": {
-            "create_tables.py": [
-                "${var.catalog}",
-                "${var.schema}",
-                *[f"sql/{f}" for f in ddl_files],
-            ],
-        },
+        "id":          f"setup_{var_safe(ddl_file)}",
+        "name":        cfg["name"],
+        "type":        cfg["type"],
+        "locked":      True,
+        "inputs":      [],
+        "entry":       ddl_file,
+        "entry_path":  f"sql/{ddl_file}",
+        "params":      [],                    # catalog/schema are added by the jobs emitter
+        "destination": {"type": "tables", "subfolder": "", "tables": cfg.get("tables", [])},
     }
-
-
-def inject_table_setup_dependency(input_layers):
-    """Give every table-writing layer an auto source from `table_setup`.
-
-    Operates on INPUT shape (st.session_state.layers), BEFORE the main loop
-    converts to output. Uses the input `type` key, not `data_upload_type`.
-    """
-    for layer in input_layers:
-        if layer["name"] == "table_setup":
-            continue
-        dest = layer.get("destination", {})
-        if dest.get("type") == "tables":
-            layer.setdefault("sources", [])
-            already_depends = any(
-                s.get("type") == "auto" and s.get("from") == "table_setup"
-                for s in layer["sources"]
-            )
-            if not already_depends:
-                layer["sources"].append({"type": "auto", "from": "table_setup"})
 
 
 def init_state():
-    if "src_files" not in st.session_state:
-        st.session_state.src_files = {}
-    if "src_zip_map" not in st.session_state:
-        st.session_state.src_zip_map = {}
-    if "preview_file" not in st.session_state:
-        st.session_state.preview_file = None
-    if "sql_files" not in st.session_state:
-        st.session_state.sql_files = {}
-    if "detected_languages" not in st.session_state:
-        st.session_state.detected_languages = {}
-    if "language_versions" not in st.session_state:
-        st.session_state.language_versions = {}
-    if "gold_tables" not in st.session_state:
-        st.session_state.gold_tables = []
-    if "bronze_data_files" not in st.session_state:
-        st.session_state.bronze_data_files = {}
+    defaults = {
+        "src_files": {}, "src_zip_map": {}, "preview_file": None, "sql_files": {},
+        "detected_languages": {}, "language_versions": {}, "gold_tables": [],
+        "data_files": {},       # {subfolder: {filename: bytes}} -- files uploaded into a folder
+        "setup_stages": {},     # {ddl_file: {"name": ..., "type": ..., "tables": [...]}}
+        "folders": [],          # [{"volume": ..., "subfolder": ...}]
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state:
+            st.session_state[k] = v
     if "layers" not in st.session_state:
-        st.session_state.layers = [
-            {
-                "name": "bronze", "type": "bronze",
-                "sources": [
-                    {"type": "manual", "subfolder": "omop_vocabulary", "enabled": False, "scripts": [], "script_params": {}, "files_key": "bronze_data_files"},
-                    {"type": "script", "subfolder": "synpuf_raw",      "enabled": False, "scripts": [], "script_params": {}},
-                ],
-                "destination": {"type": "volume", "subfolder": "", "tables": []},
-                "script": [],
-                "script_params": {},
-            },
-            {
-                "name": "silver", "type": "silver",
-                "sources": [{"type": "auto", "from": "bronze"}],
-                "destination": {"type": "volume", "subfolder": "silver_output", "tables": []},
-                "script": [],
-                "script_params": {},
-            },
-            {
-                "name": "gold", "type": "gold",
-                "sources": [{"type": "auto", "from": "silver"}],
-                "destination": {"type": "tables", "subfolder": "", "tables": []},
-                "script": [],
-                "script_params": {},
-            },
-        ]
+        bronze = new_layer("bronze", "bronze")
+        silver = new_layer("silver", "silver", upstream_id=bronze["id"])
+        silver["destination"]["subfolder"] = "silver_output"
+        gold   = new_layer("gold", "gold", upstream_id=silver["id"])
+        st.session_state.layers = [bronze, silver, gold]
 
 
-def render_script_params(script_names, params_dict, key_prefix):
-    """Render per-script parameter editors. Each param is a free-text string —
-    user types ${var.foo} for a variable ref or a literal value directly."""
+CUSTOM = "Custom value…"
+ENV_RE = re.compile(r"^([A-Z_][A-Z0-9_]*)=(.*)$")     # NAME=value
+VAR_RE = re.compile(r"^\$\{var\.([a-z0-9_]+)\}$")     # ${var.name}
+
+
+def render_script_params(script_names, params_dict, key_prefix, variables):
+    """Per-script parameter editor.
+
+    variables: {variable_name: resolved value} -- e.g.
+        {"synpuf_raw_subfolder_path": "/Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/synpuf_raw"}
+
+    The dropdown shows variable names; the resolved value is shown read-only
+    beside it. Only "Custom value…" is free text. Each param is stored as
+    "${var.name}", a literal, or "NAME=<either>" when an env-var name is given.
+    """
+    choices = list(variables) + [CUSTOM]
+
     for script_name in script_names:
         params = params_dict.setdefault(script_name, [])
 
-        with st.expander(f"Parameters for `{script_name}` ({len(params)})"):
+        with st.expander(f"Parameters for `{script_name}`", expanded=True):
+            st.caption("Leave **Name** empty for a positional argument. Fill it in to pass "
+                       "the value as an environment variable instead.")
+
             for pi in range(len(params)):
-                c1, c2 = st.columns([10, 1])
+                # Split the stored string back into its parts for display.
+                m = ENV_RE.match(params[pi])
+                env_name, value = (m.group(1), m.group(2)) if m else ("", params[pi])
+                vm = VAR_RE.match(value)
+                is_known_var = bool(vm) and vm.group(1) in variables
+                current = vm.group(1) if is_known_var else CUSTOM
+
+                k = f"{key_prefix}_{script_name}_{pi}"
+                c1, c2, c3, c4 = st.columns([3, 3, 5, 1])
                 with c1:
-                    params[pi] = st.text_input(
-                        "param",
-                        value=params[pi],
-                        key=f"{key_prefix}_val_{script_name}_{pi}",
-                        placeholder='e.g. ${var.synpuf_raw_subfolder_path}  or  all',
-                        label_visibility="collapsed",
-                    )
+                    env_name = st.text_input(
+                        "Name", value=env_name, key=f"{k}_name",
+                        placeholder="optional, e.g. BASE_OUTPUT_DIRECTORY",
+                        label_visibility="collapsed").strip()
                 with c2:
-                    if st.button("✕", key=f"{key_prefix}_rm_{script_name}_{pi}"):
+                    pick = st.selectbox(
+                        "Value", choices, index=choices.index(current),
+                        key=f"{k}_pick", label_visibility="collapsed")
+                with c3:
+                    if pick == CUSTOM:
+                        value = st.text_input(
+                            "Custom value", value="" if is_known_var else value,
+                            key=f"{k}_custom", placeholder="e.g. 1  or  DE_{0}",
+                            label_visibility="collapsed")
+                    else:
+                        value = "${var." + pick + "}"
+                        st.text_input(
+                            "Resolves to", value=variables[pick], disabled=True,
+                            key=f"{k}_resolved_{pick}", label_visibility="collapsed")
+                with c4:
+                    if st.button("✕", key=f"{k}_rm"):
                         params.pop(pi)
                         st.rerun()
+
+                if env_name and not re.fullmatch(r"[A-Z_][A-Z0-9_]*", env_name):
+                    st.error(f"`{env_name}`: use UPPERCASE letters, digits and `_`, "
+                             "not starting with a digit.")
+                params[pi] = f"{env_name}={value}" if env_name else value
 
             if st.button("+ Add parameter", key=f"{key_prefix}_add_{script_name}"):
                 params.append("")
@@ -215,8 +199,9 @@ def build_zip(json_str, project):
             zf.writestr(f"{project}/src/{filename}", content)
         for filename, content in st.session_state.sql_files.items():
             zf.writestr(f"{project}/sql/{filename}", content)
-        for filename, content in st.session_state.bronze_data_files.items():
-            zf.writestr(f"{project}/data/bronze/{filename}", content)
+        for subfolder, files in st.session_state.data_files.items():
+            for filename, content in files.items():
+                zf.writestr(f"{project}/data/{subfolder}/{filename}", content)
     buf.seek(0)
     return buf.read()
 
@@ -408,6 +393,255 @@ def render():
     else:
         st.caption("Orion will scaffold new Catalog, Schema, and Volume names from your project name.")
 
+    st.markdown("**Volumes and folders**")
+    st.caption("Declare every folder the pipeline reads from or writes to, including ones "
+               "no stage produces (e.g. reference data). They become selectable as task "
+               "parameters in Section 5.")
+
+    for fi, folder in enumerate(st.session_state.folders):
+        c1, c2, c3 = st.columns([3, 3, 1])
+        with c1:
+            folder["volume"] = st.text_input(
+                "Volume", value=folder.get("volume") or uc_volume, key=f"fld_vol_{fi}")
+        with c2:
+            folder["subfolder"] = st.text_input(
+                "Subfolder", value=folder.get("subfolder", ""), key=f"fld_sub_{fi}")
+        with c3:
+            st.write("")
+            st.write("")
+            if st.button("✕", key=f"fld_rm_{fi}"):
+                st.session_state.folders.pop(fi)
+                st.rerun()
+
+        sub = folder["subfolder"].strip()
+        if sub and not re.fullmatch(r"[A-Za-z0-9_-]+", sub):
+            st.error(f"`{sub}`: use only letters, digits, `_` and `-`.")
+        elif sub and folder["volume"] and uc_catalog and uc_schema:
+            st.caption(f"`/Volumes/{uc_catalog}/{uc_schema}/{folder['volume']}/{sub}`  →  "
+                       f"`{var_safe(sub)}_subfolder_path`")
+
+    names = [f["subfolder"].strip() for f in st.session_state.folders if f["subfolder"].strip()]
+    dupes = {n for n in names if names.count(n) > 1}
+    if dupes:
+        st.error("Each subfolder name must be unique: " + ", ".join(f"`{d}`" for d in sorted(dupes)))
+
+    if st.button("+ Add folder"):
+        st.session_state.folders.append({"volume": uc_volume, "subfolder": ""})
+        st.rerun()
+
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Layer helpers -- shared by the table setup cards (Section 4) and the
+    # medallion layers (Section 5), so every layer is drawn the same way.
+    # ══════════════════════════════════════════════════════════════════════
+    def volume_path(subfolder):
+        if uc_catalog and uc_schema and uc_volume:
+            vol = next((f["volume"].strip() for f in st.session_state.folders
+                        if f["subfolder"].strip() == subfolder and f["volume"].strip()), uc_volume)
+            base = f"/Volumes/{uc_catalog}/{uc_schema}/{vol}"
+            return f"{base}/{subfolder}" if subfolder else base
+        return None
+
+    NEW_FOLDER = "+ New folder…"
+
+    def folder_picker(label, current, key):
+        """Pick a folder declared in Section 4, or define a new one here."""
+        declared = [f["subfolder"].strip() for f in st.session_state.folders if f["subfolder"].strip()]
+        options = declared + [NEW_FOLDER]
+        current = (current or "").strip()
+        if current in declared:
+            index = declared.index(current)
+        elif current:
+            index = len(options) - 1          # existing name not in Section 4 -> "new"
+        else:
+            index = None                       # nothing chosen yet
+        pick = st.selectbox(label, options, index=index, key=f"{key}_pick",
+                            placeholder="Select a folder from Section 4, or create a new one")
+        if pick == NEW_FOLDER:
+            name = st.text_input("New folder name", value="" if current in declared else current,
+                                 key=f"{key}_new").strip()
+            if name and not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+                st.error(f"`{name}`: use only letters, digits, `_` and `-`.")
+            return name
+        return pick or ""
+
+    # Every variable a parameter can reference, with the value it resolves to.
+    def _resolved(sub, vol=None):
+        vol = (vol or uc_volume).strip()
+        if uc_catalog and uc_schema and vol:
+            return f"/Volumes/{uc_catalog}/{uc_schema}/{vol}/{sub}"
+        return "(fill in Catalog / Schema / Volume in Section 4)"
+
+    variables = {"catalog": uc_catalog or "(not set)", "schema": uc_schema or "(not set)"}
+    for f in st.session_state.folders:
+        sub = f["subfolder"].strip()
+        if sub:
+            variables[f"{var_safe(sub)}_subfolder_path"] = _resolved(sub, f["volume"])
+    for _layer in st.session_state.layers:
+        for _inp in _layer["inputs"]:
+            sub = (_inp.get("subfolder") or "").strip()
+            if _inp["kind"] == "folder" and sub:
+                variables.setdefault(f"{var_safe(sub)}_subfolder_path", _resolved(sub))
+        sub = (_layer["destination"].get("subfolder") or "").strip()
+        if _layer["destination"]["type"] == "volume" and sub:
+            variables.setdefault(f"{var_safe(sub)}_subfolder_path", _resolved(sub))
+
+    runnable_files = [f for f in available_files if f.endswith((".py", ".sql"))]
+    NO_ENTRY = "(none)"
+
+    def stage_upload(subfolder, key):
+        """Optional upload of data files into a folder (e.g. OMOP vocabulary CSVs)."""
+        files = st.session_state.data_files.setdefault(subfolder, {})
+        up = st.file_uploader(f"Upload files into `{subfolder}` (optional; zip large files)",
+                              accept_multiple_files=True, key=key)
+        for f in up or []:
+            if f.name.endswith(".zip"):
+                with zipfile.ZipFile(io.BytesIO(f.read())) as zf:
+                    for name in zf.namelist():
+                        flat = name.split("/")[-1]
+                        if flat and not name.endswith("/"):
+                            files[flat] = zf.read(name)
+            else:
+                files[f.name] = f.read()
+        if files:
+            st.caption(f"{len(files)} file(s) staged for `{subfolder}`: "
+                       + ", ".join(f"`{n}`" for n in list(files)[:8])
+                       + (" …" if len(files) > 8 else ""))
+
+    def render_layer(layer, layers_above, runs_after=()):
+        """Draw one layer card. Same format for every layer; locked layers
+        (table setup) show their filled-in values read-only."""
+        lid, locked = layer["id"], layer.get("locked", False)
+        with st.container(border=True):
+
+            # ── HEADER ──
+            h1, h2, h3 = st.columns([3, 2, 1])
+            with h1:
+                layer["name"] = st.text_input("Layer name", value=layer["name"], key=f"name_{lid}")
+            with h2:
+                layer["type"] = st.selectbox(
+                    "Layer type", options=LAYER_TYPES,
+                    index=LAYER_TYPES.index(layer["type"]) if layer["type"] in LAYER_TYPES else 0,
+                    key=f"type_{lid}")
+            with h3:
+                if not locked:
+                    st.write("")
+                    st.write("")
+                    if st.button("✕ Remove", key=f"rm_{lid}"):
+                        st.session_state.layers = [l for l in st.session_state.layers if l["id"] != lid]
+                        st.rerun()
+
+            # ── INPUTS ──
+            st.markdown("**Inputs**")
+            if locked:
+                st.caption("None. Runs before every pipeline layer.")
+            else:
+                above = {l["id"]: (l["name"] or l["type"]) for l in layers_above}
+                for inp in list(layer["inputs"]):
+                    iid = inp["id"]
+                    c1, c2, c3 = st.columns([2, 6, 1])
+                    with c1:
+                        kinds = ["upstream", "folder"]
+                        inp["kind"] = st.selectbox(
+                            "Input type", kinds, index=kinds.index(inp["kind"]),
+                            format_func=lambda k: {"upstream": "Upstream layer", "folder": "Folder"}[k],
+                            key=f"in_kind_{lid}_{iid}")
+                    with c2:
+                        if inp["kind"] == "upstream":
+                            if above:
+                                ids = list(above)
+                                cur = inp.get("layer_id")
+                                inp["layer_id"] = st.selectbox(
+                                    "Upstream layer", ids,
+                                    index=ids.index(cur) if cur in ids else len(ids) - 1,
+                                    format_func=lambda i: above[i], key=f"in_up_{lid}_{iid}")
+                            else:
+                                st.caption("No layers above this one to read from.")
+                                inp["layer_id"] = None
+                        else:
+                            inp["subfolder"] = folder_picker(
+                                "Folder", inp.get("subfolder", ""), key=f"in_fld_{lid}_{iid}")
+                    with c3:
+                        st.write("")
+                        st.write("")
+                        if st.button("✕", key=f"in_rm_{lid}_{iid}"):
+                            layer["inputs"] = [i for i in layer["inputs"] if i["id"] != iid]
+                            st.rerun()
+                    if inp["kind"] == "folder" and inp.get("subfolder"):
+                        p = volume_path(inp["subfolder"])
+                        st.caption(f"Reads from: `{p}`" if p else
+                                   "Reads from: fill in Catalog / Schema / Volume in Section 4.")
+                        stage_upload(inp["subfolder"], key=f"in_up_files_{lid}_{iid}")
+                if st.button("+ Add input", key=f"in_add_{lid}"):
+                    layer["inputs"].append({
+                        "id": uuid.uuid4().hex[:8],
+                        "kind": "upstream" if above else "folder",
+                        "layer_id": list(above)[-1] if above else None,
+                    })
+                    st.rerun()
+
+            # ── ENTRY POINT ──
+            st.markdown("**Entry point Script**")
+            if locked:
+                st.text_input("Entry point Script", value=layer["entry_path"], disabled=True,
+                              key=f"entry_{lid}", label_visibility="collapsed")
+            else:
+                choices = [NO_ENTRY] + runnable_files
+                cur = layer.get("entry") or NO_ENTRY
+                pick = st.selectbox(
+                    "Entry point Script", choices, index=choices.index(cur) if cur in choices else 0,
+                    key=f"entry_{lid}", label_visibility="collapsed")
+                layer["entry"] = "" if pick == NO_ENTRY else pick
+                if not runnable_files:
+                    st.caption("Upload .py or .sql scripts in Section 1 to choose one here.")
+
+            # ── PARAMETERS ──
+            entry = layer.get("entry")
+            if entry and entry.endswith(".sql"):
+                st.markdown("**Parameters**")
+                st.caption(f"Passed automatically: catalog `{uc_catalog or '(not set)'}`, "
+                           f"schema `{uc_schema or '(not set)'}`.")
+            elif entry:
+                render_script_params([entry], {entry: layer["params"]},
+                                     key_prefix=f"params_{lid}", variables=variables)
+
+            # ── DESTINATION ──
+            dest = layer["destination"]
+            st.markdown("**Destination**")
+            if not locked:
+                dest["type"] = st.selectbox(
+                    "Destination type", ["volume", "tables"],
+                    index=0 if dest["type"] == "volume" else 1,
+                    format_func=lambda x: {"volume": "Volume folder",
+                                           "tables": "Unity Catalog tables"}[x],
+                    key=f"dest_type_{lid}")
+            if dest["type"] == "volume":
+                dest["subfolder"] = folder_picker("Output folder", dest.get("subfolder", ""),
+                                                  key=f"dest_{lid}")
+                p = volume_path(dest["subfolder"])
+                st.caption(f"Output path: `{p}`" if p else
+                           "Output path: fill in Catalog / Schema / Volume in Section 4.")
+            elif locked:
+                tables = dest.get("tables", [])
+                st.caption(f"{len(tables)} table(s) in `{uc_catalog or 'catalog'}.{uc_schema or 'schema'}`: "
+                           + ", ".join(f"`{t}`" for t in tables) if tables
+                           else "No CREATE TABLE statements found in this file.")
+            else:
+                if st.session_state.gold_tables:
+                    dest["tables"] = st.multiselect(
+                        "Tables *", options=st.session_state.gold_tables,
+                        default=[t for t in dest.get("tables", []) if t in st.session_state.gold_tables],
+                        key=f"dest_tables_{lid}",
+                        placeholder="Select tables defined in Section 4...")
+                    if uc_catalog and uc_schema and dest["tables"]:
+                        st.caption(f"Writes to `{uc_catalog}.{uc_schema}.<table>`.")
+                else:
+                    st.warning("No tables available — select DDL SQL files in Section 4.")
+                    dest["tables"] = []
+                if runs_after:
+                    st.caption("Runs after: " + ", ".join(f"`{n}`" for n in runs_after))
+
+
     st.markdown("**Gold table definitions**")
     has_db = st.radio(
         "Do you have DDL SQL files that define your gold tables?",
@@ -420,19 +654,38 @@ def render():
             selected_sql = st.multiselect("Select DDL SQL file(s)", options=sql_available, key="selected_sql_files")
             st.session_state.sql_files = {f: st.session_state.src_files[f] for f in (selected_sql or [])}
             st.session_state.gold_tables = []
-            for fname in (selected_sql or []):
+            selected_sql = selected_sql or []
+            # forget setup stages for files that were deselected
+            for gone in set(st.session_state.setup_stages) - set(selected_sql):
+                st.session_state.setup_stages.pop(gone)
+
+            for fname in selected_sql:
+                file_tables = []
                 for t in parse_table_names(st.session_state.src_files[fname]):
                     tc = t.strip('`"').split(".")[-1]
-                    if tc and tc not in st.session_state.gold_tables:
+                    if tc and tc not in file_tables:
+                        file_tables.append(tc)
+                for tc in file_tables:
+                    if tc not in st.session_state.gold_tables:
                         st.session_state.gold_tables.append(tc)
+                cfg = st.session_state.setup_stages.setdefault(fname, {
+                    "name": setup_stage_default_name(fname, len(selected_sql)),
+                    "type": "bronze",
+                })
+                cfg["tables"] = file_tables
+
             if st.session_state.gold_tables:
                 st.success(f"Detected {len(st.session_state.gold_tables)} table(s): "
                            + ", ".join(f"`{t}`" for t in st.session_state.gold_tables))
-                st.info(
-                    f"✓ A `table_setup` stage will be auto-generated to create these "
-                    f"{len(st.session_state.gold_tables)} table(s) from "
-                    f"{len(selected_sql)} DDL file(s), before any pipeline stage runs."
-                )
+
+                st.markdown("**Table setup stages**")
+                st.caption("Each DDL file runs as its own stage before any pipeline layer, "
+                           "creating its tables in the catalog and schema above.")
+                for fname in selected_sql:
+                    cfg = st.session_state.setup_stages[fname]
+                    layer = setup_layer(fname, cfg)
+                    render_layer(layer, layers_above=[])
+                    cfg["name"], cfg["type"] = layer["name"], layer["type"]
             elif selected_sql:
                 st.caption("No CREATE TABLE statements found in selected files.")
         else:
@@ -449,164 +702,18 @@ def render():
     st.subheader("5. Medallion layers")
 
     if uc_catalog and uc_schema and uc_volume:
-        base_path = f"/Volumes/{uc_catalog}/{uc_schema}/{uc_volume}"
-        st.caption(f"All pipeline data lives under: `{base_path}/` — subfolders per layer below.")
+        st.caption(f"All pipeline data lives under: `/Volumes/{uc_catalog}/{uc_schema}/{uc_volume}` "
+                   "— folders per layer below.")
 
-    def volume_path(subfolder):
-        if uc_catalog and uc_schema and uc_volume:
-            base = f"/Volumes/{uc_catalog}/{uc_schema}/{uc_volume}"
-            return f"{base}/{subfolder}" if subfolder else base
-        return None
+    setup_names = [cfg["name"].strip() for f, cfg in st.session_state.setup_stages.items()
+                   if f in st.session_state.sql_files]
 
-    def script_selector(key, placeholder):
-        st.caption("Optional — add a script only if this layer transforms the data. "
-                   "Leave empty and Orion generates a plain transfer step.")
-        if available_files:
-            return st.multiselect("Script(s) (optional)", options=available_files, key=key, placeholder=placeholder)
-        st.caption("Upload scripts in Section 1 to map them here.")
-        return []
-
-    # render each layer in a loop
     for idx, layer in enumerate(st.session_state.layers):
-        with st.container(border=True):
-            h1, h2, h3 = st.columns([3, 2, 1])
-            with h1:
-                layer["name"] = st.text_input("Layer name", value=layer["name"], key=f"lyr_name_{idx}")
-            with h2:
-                layer["type"] = st.selectbox(
-                    "Layer type", options=LAYER_TYPES,
-                    index=LAYER_TYPES.index(layer["type"]) if layer["type"] in LAYER_TYPES else 3,
-                    key=f"lyr_type_{idx}")
-            with h3:
-                st.write("")
-                st.write("")
-                core = {"bronze", "silver", "gold"}
-                removable = layer["type"] not in core or sum(
-                    1 for l in st.session_state.layers if l["type"] == layer["type"]) > 1
-                if removable and st.button("✕ Remove", key=f"lyr_rm_{idx}"):
-                    st.session_state.layers.pop(idx)
-                    st.rerun()
-
-            # ── SOURCES ──
-            st.markdown("**Sources**")
-            for si, src in enumerate(layer["sources"]):
-                if src["type"] == "auto":
-                    st.caption(f"Auto-set to {src.get('from', 'upstream')} layer output.")
-                elif src["type"] == "manual":
-                    src["enabled"] = st.checkbox(
-                        "Manual file upload (e.g. OMOP vocabulary CSVs)",
-                        value=src.get("enabled", False), key=f"src_manual_{idx}_{si}")
-                    if src["enabled"]:
-                        up = st.file_uploader(
-                            "Upload data files (zip large files — 200MB limit per file)",
-                            accept_multiple_files=True, key=f"src_manual_up_{idx}_{si}")
-                        if up:
-                            for f in up:
-                                if f.name.endswith(".zip"):
-                                    with zipfile.ZipFile(io.BytesIO(f.read())) as zf:
-                                        for name in zf.namelist():
-                                            if not name.endswith("/"):
-                                                flat = name.split("/")[-1]
-                                                if flat:
-                                                    st.session_state.bronze_data_files[flat] = zf.read(name)
-                                else:
-                                    st.session_state.bronze_data_files[f.name] = f.read()
-                        if st.session_state.bronze_data_files:
-                            st.caption(f"{len(st.session_state.bronze_data_files)} file(s) staged")
-                            with st.container(height=150, border=True):
-                                for fname in list(st.session_state.bronze_data_files.keys()):
-                                    fc1, fc2 = st.columns([6, 1])
-                                    with fc1:
-                                        st.caption(fname)
-                                    with fc2:
-                                        if st.button("✕", key=f"rm_data_{idx}_{si}_{fname}"):
-                                            del st.session_state.bronze_data_files[fname]
-                                            st.rerun()
-                        src["subfolder"] = st.text_input(
-                            "Output subfolder name", value=src.get("subfolder", ""),
-                            key=f"src_manual_sub_{idx}_{si}")
-                        p = volume_path(src["subfolder"])
-                        st.caption(f"Output path: `{p}/`" if p else
-                                   "Output path: fill in Catalog / Schema / Volume in Section 4.")
-                elif src["type"] == "script":
-                    src["enabled"] = st.checkbox(
-                        "Script-based data pull (e.g. API)",
-                        value=src.get("enabled", False), key=f"src_script_{idx}_{si}")
-                    if src["enabled"]:
-                        src["scripts"] = script_selector(f"src_script_sel_{idx}_{si}", "Select data pull script(s)...")
-                        src["subfolder"] = st.text_input(
-                            "Output subfolder name", value=src.get("subfolder", ""),
-                            key=f"src_script_sub_{idx}_{si}")
-                        p = volume_path(src["subfolder"])
-                        st.caption(f"Output path: `{p}/`" if p else
-                                   "Output path: fill in Catalog / Schema / Volume in Section 4.")
-
-                        # Per-script parameters
-                        if src.get("scripts"):
-                            src.setdefault("script_params", {})
-                            render_script_params(
-                                script_names=src["scripts"],
-                                params_dict=src["script_params"],
-                                key_prefix=f"src_params_{idx}_{si}",
-                            )
-
-            # ── TRANSFORM SCRIPT (for auto-source layers like silver/gold) ──
-            has_auto = any(s["type"] == "auto" for s in layer["sources"])
-            if has_auto:
-                layer["script"] = script_selector(f"lyr_script_{idx}", "Select transformation script(s)...")
-
-                # Per-script parameters
-                if layer["script"]:
-                    layer.setdefault("script_params", {})
-                    render_script_params(
-                        script_names=layer["script"],
-                        params_dict=layer["script_params"],
-                        key_prefix=f"lyr_params_{idx}",
-                    )
-
-            # ── DESTINATION ──
-            dest = layer["destination"]
-
-            if layer["type"] == "gold":
-                dest["type"] = "tables"
-            elif layer["type"] in ("bronze", "silver"):
-                dest["type"] = "volume"
-            else:
-                st.markdown("**Destination**")
-                dest["type"] = st.selectbox(
-                    "Destination type",
-                    options=["volume", "tables"],
-                    index=0 if dest.get("type", "volume") == "volume" else 1,
-                    format_func=lambda x: {"volume": "Databricks Volume",
-                                           "tables": "Unity Catalog Delta tables"}[x],
-                    key=f"dest_type_{idx}")
-
-            if dest["type"] == "volume":
-                per_source_subs = [s for s in layer["sources"] if s["type"] in ("manual", "script") and s.get("enabled")]
-                if not per_source_subs:
-                    st.markdown("**Destination**")
-                    dest["subfolder"] = st.text_input(
-                        "Output subfolder name", value=dest.get("subfolder", ""),
-                        key=f"dest_sub_{idx}")
-                    p = volume_path(dest["subfolder"])
-                    st.caption(f"Output path: `{p}/`" if p else
-                               "Output path: fill in Catalog / Schema / Volume in Section 4.")
-            else:
-                st.markdown("**Destination — Unity Catalog tables**")
-                if st.session_state.gold_tables:
-                    dest["tables"] = st.multiselect(
-                        "Select tables *", options=st.session_state.gold_tables,
-                        default=[t for t in dest.get("tables", []) if t in st.session_state.gold_tables],
-                        key=f"dest_tables_{idx}",
-                        placeholder="Select tables defined in Section 4...")
-                    if uc_catalog and uc_schema and dest["tables"]:
-                        st.caption(f"Destination: `{uc_catalog}.{uc_schema}.<table>` per selected table.")
-                else:
-                    st.warning("No tables available — select DDL SQL files in Section 4.")
-                    dest["tables"] = []
+        render_layer(layer, layers_above=st.session_state.layers[:idx], runs_after=setup_names)
 
     if st.button("+ Add layer"):
-        st.session_state.layers.append(default_layer("", "custom"))
+        last = st.session_state.layers[-1]["id"] if st.session_state.layers else None
+        st.session_state.layers.append(new_layer("", "custom", upstream_id=last))
         st.rerun()
 
     st.markdown("---")
@@ -623,11 +730,19 @@ def render():
         "Workspace URL":         workspace_url,
     }
     missing = [label for label, val in required.items() if not str(val).strip()]
+
+    all_names = setup_names + [(l["name"] or "").strip() for l in st.session_state.layers]
+    if any(not n for n in all_names):
+        missing.append("A name for every layer")
+    dup_names = sorted({n for n in all_names if n and all_names.count(n) > 1})
+    if dup_names:
+        missing.append("Unique layer names (" + ", ".join(dup_names) + ")")
+
     if missing:
         st.warning("Required before generating: " + ", ".join(missing))
 
     # ══════════════════════════════════════════════════════════════════════
-    # Build spec — dynamic from layers list
+    # Build spec — every layer goes through the same function
     # ══════════════════════════════════════════════════════════════════════
     def default_or(value, name):
         return value if value else f"{name}_default"
@@ -641,113 +756,68 @@ def render():
         for lang in selected_languages
     ]
 
-    # ── Prepend table_setup layer in INPUT shape, before the main loop ──
-    # The main loop then converts it to output shape alongside bronze/silver/
-    # gold, so there's one code path for all stages. No drift possible.
-    input_layers = list(st.session_state.layers)
-    if st.session_state.sql_files and st.session_state.gold_tables:
-        setup_layer = build_table_setup_layer(
-            ddl_files=list(st.session_state.sql_files.keys()),
-        )
-        input_layers = [setup_layer] + input_layers
-        inject_table_setup_dependency(input_layers)
+    names_by_id = {l["id"]: (l["name"] or l["type"]).strip() for l in st.session_state.layers}
 
-    stages = []
-    for layer in input_layers:
-        lname = layer["name"] or layer["type"]
+    def layer_to_stage(layer):
+        locked = layer.get("locked", False)
 
-        # build sources
+        # sources: upstream layers (by id -> current name) and input folders
         src_out = []
-        for src in layer["sources"]:
-            if src["type"] == "auto":
-                src_out.append({"data_upload_type": "auto", "from": src.get("from")})
-            elif src["type"] in ("manual", "script") and src.get("enabled"):
-                sub = (src.get("subfolder") or lname).strip()
-                entry = {
-                    "data_upload_type": "manual" if src["type"] == "manual" else "custom_script",
-                    "subfolder_name":   sub,
-                }
-                if src["type"] == "manual":
-                    entry["files"] = default_or(list(st.session_state.bronze_data_files.keys()), "files")
-                else:
-                    # Each script is a dict with file + parameters list of strings
-                    params_map = src.get("script_params", {})
-                    scripts_with_params = [
-                        {
-                            "file":       s,
-                            "parameters": clean_params(params_map.get(s)),
-                        }
-                        for s in src.get("scripts") or []
-                    ]
-                    entry["scripts"] = scripts_with_params or default_or(None, "scripts")
+        for inp in layer.get("inputs", []):
+            if inp["kind"] == "upstream" and inp.get("layer_id") in names_by_id:
+                src_out.append({"data_upload_type": "auto", "from": names_by_id[inp["layer_id"]]})
+            elif inp["kind"] == "folder" and (inp.get("subfolder") or "").strip():
+                sub = inp["subfolder"].strip()
+                entry = {"data_upload_type": "manual", "subfolder_name": sub}
+                files = list(st.session_state.data_files.get(sub, {}))
+                if files:
+                    entry["files"] = files
                 src_out.append(entry)
 
-        # build destination
         dest = layer["destination"]
+        # table-writing layers run after every table setup stage
+        if dest["type"] == "tables" and not locked:
+            for sn in setup_names:
+                if not any(s.get("from") == sn for s in src_out):
+                    src_out.append({"data_upload_type": "auto", "from": sn})
+
+        # entry point script: one script per layer
+        if locked:
+            entry_point = {"file": layer["entry"], "path": layer["entry_path"], "parameters": []}
+        elif layer.get("entry"):
+            entry_point = {
+                "file":       layer["entry"],
+                "path":       f"src/{layer['entry']}",
+                "parameters": clean_params(layer["params"]),
+            }
+        else:
+            entry_point = "entry_point_default"
+
+        # destination
         if dest["type"] == "volume":
-            sub = (dest.get("subfolder") or "").strip()
             dest_out = {"type": "volume"}
-            if sub:
-                dest_out["subfolder_name"] = sub
+            if (dest.get("subfolder") or "").strip():
+                dest_out["subfolder_name"] = dest["subfolder"].strip()
         else:
             dest_out = {
                 "type":    "tables",
                 "catalog": default_or(uc_catalog, "catalog"),
                 "schema":  default_or(uc_schema, "schema"),
             }
-            # Setup layers define their tables via DDL files passed as script
-            # parameters, so no `tables` field here. Every other layer type
-            # must declare the specific tables it writes to — missing tables
-            # gets a sentinel so the user sees the gap.
-            if layer["type"] != "setup":
+            if not locked:
                 dest_out["tables"] = default_or(dest.get("tables"), "tables")
 
-        # Entry-point script for this stage. One stage = one entry point.
-        # Preference order:
-        #   1. Layer's transform script (silver/gold with auto source)
-        #   2. Fallback: a single source script (bronze with one data-pull
-        #      script — that script IS the stage's work, so promote it)
-        # script_paths lets a layer override the default `src/<file>` path.
-        params_map  = layer.get("script_params", {})
-        paths_map   = layer.get("script_paths", {})
-        script_list = layer.get("script") or []
-
-        if script_list:
-            entry_file = script_list[0]
-            entry_point_out = {
-                "file":       entry_file,
-                "path":       paths_map.get(entry_file, f"src/{entry_file}"),
-                "parameters": clean_params(params_map.get(entry_file)),
-            }
-        else:
-            # Fall back to a source script if the stage has exactly one
-            # enabled script source with exactly one script.
-            enabled_script_sources = [
-                s for s in layer["sources"]
-                if s.get("type") == "script"
-                and s.get("enabled")
-                and s.get("scripts")
-            ]
-            if (len(enabled_script_sources) == 1
-                    and len(enabled_script_sources[0]["scripts"]) == 1):
-                source = enabled_script_sources[0]
-                entry_file = source["scripts"][0]
-                source_params = source.get("script_params", {}).get(entry_file, [])
-                entry_point_out = {
-                    "file":       entry_file,
-                    "path":       paths_map.get(entry_file, f"src/{entry_file}"),
-                    "parameters": clean_params(source_params),
-                }
-            else:
-                entry_point_out = "entry_point_default"
-
-        stages.append({
-            "name":        lname,
+        return {
+            "name":        (layer["name"] or layer["type"]).strip(),
             "layer":       layer["type"],
             "sources":     src_out,
-            "entry_point": entry_point_out,
+            "entry_point": entry_point,
             "destination": dest_out,
-        })
+        }
+
+    setup_layers = [setup_layer(f, cfg) for f, cfg in st.session_state.setup_stages.items()
+                    if f in st.session_state.sql_files]
+    stages = [layer_to_stage(l) for l in setup_layers + st.session_state.layers]
 
     spec = {
         "apiVersion": "orion/v1",
@@ -764,6 +834,11 @@ def render():
             "volume":      default_or(uc_volume, "volume"),
             "ddl_files":   default_or(list(st.session_state.sql_files.keys()), "ddl_files"),
             "gold_tables": default_or(st.session_state.gold_tables, "gold_tables"),
+            "folders": [
+                {"volume": f["volume"].strip(), "subfolder": f["subfolder"].strip()}
+                for f in st.session_state.folders
+                if f["volume"].strip() and f["subfolder"].strip()
+            ],
         },
         "stages":    stages,
         "generated": str(date.today()),
