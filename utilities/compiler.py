@@ -30,6 +30,9 @@ from utilities.logger import setup_logging
 from utilities.generate_wrapper import write_all_wrappers
 from utilities.databricks_yml_emitter import build_databricks_yml
 from utilities.databricks_jobs_emitter import build_jobs_yml
+from validation.spec_validator import validate_spec, SpecValidationError
+from validation.databricks_bundle_validator import validate_bundle, BundleValidationError
+from validation.databricks_bundle_validator import validate_bundle, BundleValidationError
 
 setup_logging()
 log = logging.getLogger(__name__)
@@ -75,10 +78,18 @@ def compile_bundle(
     """
     spec_path  = Path(spec_path)
     output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
 
     spec = json.loads(spec_path.read_text(encoding="utf-8"))
     log.info("compiling %s → %s", spec_path, output_dir)
+
+    # ── Step 0: validate the spec ──
+    # Report every problem at once; write nothing if there are errors.
+    # repo_root = the folder you run the compiler from; entry_point.path is relative to it.
+    report = validate_spec(spec, repo_root=Path.cwd())   # logs each problem as it is found
+    if report.errors:
+        raise SpecValidationError(report.errors)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Step 1: wrappers ──
     # The jobs YAML will reference these by path, so write them first.
@@ -91,6 +102,12 @@ def compile_bundle(
     # ── Step 3: jobs YAML ──
     # Task definitions. Each task points at a wrapper from step 1.
     jobs_yml_path = _emit_jobs_yml(spec, output_dir)
+
+    # ── Step 4: check the files we just wrote agree with each other ──
+    # A failure here is a compiler bug, not a spec problem.
+    bundle_report = validate_bundle(output_dir, RESOURCES_DIR / JOBS_YML_NAME, WRAPPER_DIR)
+    if bundle_report.errors:
+        raise BundleValidationError(bundle_report.errors)
 
     log.info("compile complete: %d wrapper(s), 2 YAML file(s)",
              len(wrapper_paths))

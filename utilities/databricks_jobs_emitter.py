@@ -23,6 +23,8 @@ from utilities.emitter_helpers import (
     _var_ref,
     _task_key,
     _collect_variables,
+    _preflight_params,
+    PREFLIGHT_KEY,
 )
 from utilities.logger import setup_logging
 
@@ -92,6 +94,24 @@ def _collect_tasks(spec: dict, env_key: str, wrapper_dir: str, wrapper_prefix: s
     return tasks
 
 
+def _add_preflight(spec, tasks, env_key, wrapper_dir, wrapper_prefix) -> list[dict]:
+    """Put the preflight task first; every task that waited on nothing now waits on it."""
+    if not tasks:
+        return tasks                        # nothing to protect, no preflight
+    for task in tasks:
+        if not task.get("depends_on"):
+            task["depends_on"] = [{"task_key": PREFLIGHT_KEY}]
+    preflight = {
+        "task_key":        PREFLIGHT_KEY,
+        "environment_key": env_key,
+        "spark_python_task": {
+            "python_file": f"{wrapper_dir}/{wrapper_prefix}{PREFLIGHT_KEY}.py",
+            "parameters":  _preflight_params(spec),
+        },
+    }
+    return [preflight] + tasks
+
+
 def build_jobs_yml(spec: dict, wrapper_dir: str, wrapper_prefix: str) -> str:
     """Assemble resources/<project>_job.yml content from the Orion spec."""
 
@@ -102,6 +122,7 @@ def build_jobs_yml(spec: dict, wrapper_dir: str, wrapper_prefix: str) -> str:
 
     env_key = "default_env"
     tasks = _collect_tasks(spec, env_key, wrapper_dir, wrapper_prefix)
+    tasks = _add_preflight(spec, tasks, env_key, wrapper_dir, wrapper_prefix)
 
     job = {
         "name": spec["project"],

@@ -33,6 +33,25 @@ def _task_key(layer: str, stage_name: str, identifier: str) -> str:
     return f"{_var_safe(layer)}_{_var_safe(stage_name)}_{_var_safe(identifier)}"
 
 
+PREFLIGHT_KEY = "orion_preflight"     # task key of the job-start check; wrapper is run_orion_preflight.py
+
+
+def _preflight_params(spec: dict) -> list[str]:
+    """Parameters for the preflight task: catalog, schema, then every volume the bundle uses.
+
+    The main volume is a variable; extra volumes from unity_catalog.folders
+    are passed by name (they have no variable of their own).
+    """
+    uc = spec.get("unity_catalog", {})
+    params = [_var_ref("catalog"), _var_ref("schema"), _var_ref("volume")]
+    extra = []
+    for folder in uc.get("folders") or []:
+        vol = (folder.get("volume") or "").strip()
+        if vol and vol != uc.get("volume") and vol not in extra:
+            extra.append(vol)
+    return params + extra
+
+
 def _collect_variables(spec: dict) -> dict:
     """Walk the spec and return the flat {var_name: {default: value}} dict
     that lands under `variables:` in databricks.yml.
