@@ -81,7 +81,7 @@ def new_layer(name, ltype, upstream_id=None):
 
 # ── Table setup stages ──────────────────────────────────────────────────────
 # One setup stage per DDL file selected in Section 4. It uses the same layer
-# format as everything else, with the entry point script, parameters and destination
+# format as everything else, with the entry point, parameters and destination
 # filled in and locked. Only its name and layer type are editable.
 
 def setup_stage_default_name(ddl_file, n_files):
@@ -97,7 +97,7 @@ def setup_layer(ddl_file, cfg):
         "locked":      True,
         "inputs":      [],
         "entry":       ddl_file,
-        "entry_path":  f"sql/{ddl_file}",
+        "entry_path":  ddl_file,
         "params":      [],                    # catalog/schema are added by the jobs emitter
         "destination": {"type": "tables", "subfolder": "", "tables": cfg.get("tables", [])},
     }
@@ -142,7 +142,7 @@ def render_script_params(script_names, params_dict, key_prefix, variables):
     for script_name in script_names:
         params = params_dict.setdefault(script_name, [])
 
-        with st.expander(f"Parameters for `{script_name}`", expanded=True):
+        with st.expander(f"Parameters for `{script_name}` ({len(params)})"):
             st.caption("Leave **Name** empty for a positional argument. Fill it in to pass "
                        "the value as an environment variable instead.")
 
@@ -196,9 +196,7 @@ def build_zip(json_str, project):
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.writestr(f"{project}/orion.json", json_str)
         for filename, content in st.session_state.src_files.items():
-            zf.writestr(f"{project}/src/{filename}", content)
-        for filename, content in st.session_state.sql_files.items():
-            zf.writestr(f"{project}/sql/{filename}", content)
+            zf.writestr(f"{project}/{filename}", content)
         for subfolder, files in st.session_state.data_files.items():
             for filename, content in files.items():
                 zf.writestr(f"{project}/data/{subfolder}/{filename}", content)
@@ -255,12 +253,11 @@ def render():
             if f.name.endswith(".zip"):
                 with zipfile.ZipFile(io.BytesIO(f.read())) as zf:
                     for name in zf.namelist():
-                        if not name.endswith("/"):
-                            flat = name.split("/")[-1]
-                            if flat and flat not in st.session_state.src_files:
-                                st.session_state.src_files[flat] = zf.read(name)
-                                st.session_state.src_zip_map[flat] = f.name
-                                newly.append(flat)
+                        if not name.endswith("/"):            # skip folder entries
+                            if name not in st.session_state.src_files:
+                                st.session_state.src_files[name] = zf.read(name)   # keep the path from the zip
+                                st.session_state.src_zip_map[name] = f.name
+                                newly.append(name)
             else:
                 if f.name not in st.session_state.src_files:
                     st.session_state.src_files[f.name] = f.read()
@@ -581,15 +578,15 @@ def render():
                     st.rerun()
 
             # ── ENTRY POINT ──
-            st.markdown("**Entry point Script**")
+            st.markdown("**Entry point**")
             if locked:
-                st.text_input("Entry point Script", value=layer["entry_path"], disabled=True,
+                st.text_input("Entry point", value=layer["entry_path"], disabled=True,
                               key=f"entry_{lid}", label_visibility="collapsed")
             else:
                 choices = [NO_ENTRY] + runnable_files
                 cur = layer.get("entry") or NO_ENTRY
                 pick = st.selectbox(
-                    "Entry point Script", choices, index=choices.index(cur) if cur in choices else 0,
+                    "Entry point", choices, index=choices.index(cur) if cur in choices else 0,
                     key=f"entry_{lid}", label_visibility="collapsed")
                 layer["entry"] = "" if pick == NO_ENTRY else pick
                 if not runnable_files:
@@ -781,13 +778,13 @@ def render():
                 if not any(s.get("from") == sn for s in src_out):
                     src_out.append({"data_upload_type": "auto", "from": sn})
 
-        # entry point script: one script per layer
+        # entry point: one script per layer
         if locked:
-            entry_point = {"file": layer["entry"], "path": layer["entry_path"], "parameters": []}
+            entry_point = {"file": layer["entry"].split("/")[-1], "path": layer["entry_path"], "parameters": []}
         elif layer.get("entry"):
             entry_point = {
-                "file":       layer["entry"],
-                "path":       f"src/{layer['entry']}",
+                "file":       layer["entry"].split("/")[-1],
+                "path":       layer["entry"],
                 "parameters": clean_params(layer["params"]),
             }
         else:
