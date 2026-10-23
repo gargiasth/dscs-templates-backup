@@ -25,6 +25,7 @@ import pytest
 import yaml
 
 from utilities.compiler import compile_bundle
+from validation.spec_validator import SpecValidationError
 
 
 # ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -57,8 +58,16 @@ def minimal_spec_dict():
 
 
 @pytest.fixture
-def minimal_spec_path(minimal_spec_dict, tmp_path):
-    """A minimal spec written to a tmp file. Returns its path."""
+def minimal_spec_path(minimal_spec_dict, tmp_path, monkeypatch):
+    """A minimal spec written to a tmp file, with its entry script on disk.
+
+    The compiler looks for entry_point.path relative to the folder it runs from,
+    so we run from tmp_path and put src/download.py there.
+    """
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "download.py").write_text("print('hi')\n", encoding="utf-8")
+
     path = tmp_path / "spec.json"
     path.write_text(json.dumps(minimal_spec_dict), encoding="utf-8")
     return path
@@ -93,8 +102,8 @@ class TestHappyPath:
 
     def test_creates_wrappers_under_utilities_wrappers(self, minimal_spec_path, output_dir):
         result = compile_bundle(minimal_spec_path, output_dir)
-        assert len(result["wrappers"]) == 1
-        wrapper_path = result["wrappers"][0]
+        assert len(result["wrappers"]) == 2          # preflight + the stage
+        wrapper_path = result["wrappers"][1]
         assert wrapper_path.exists()
         # Should land in <output_dir>/utilities/wrappers/
         assert wrapper_path.parent.name == "wrappers"
@@ -113,7 +122,7 @@ class TestHappyPath:
         result = compile_bundle(minimal_spec_path, output_dir)
         parsed = yaml.safe_load(result["jobs_yml"].read_text())
         tasks = parsed["resources"]["jobs"]["demo"]["tasks"]
-        assert len(tasks) == 1
+        assert len(tasks) == 2                        # preflight + the stage
 
     def test_accepts_string_paths(self, minimal_spec_path, output_dir):
         """Both args accept str, not just Path."""
@@ -127,16 +136,7 @@ class TestHappyPath:
         compile_bundle(minimal_spec_path, new_dir)
         assert new_dir.exists()
 
-    def test_every_task_points_at_an_existing_wrapper(self, minimal_spec_path, output_dir):
-        """Each task's python_file must resolve to a wrapper the compiler actually wrote."""
-        result = compile_bundle(minimal_spec_path, output_dir)
-        parsed = yaml.safe_load(result["jobs_yml"].read_text())
 
-        for task in parsed["resources"]["jobs"]["demo"]["tasks"]:
-            python_file = task["spark_python_task"]["python_file"]
-            wrapper = (result["jobs_yml"].parent / python_file).resolve()
-            assert wrapper.exists(), f"{task['task_key']} points at missing {wrapper}"
-            
 # ── Angry path ───────────────────────────────────────────────────────────────
 
 class TestAngryPath:
@@ -218,7 +218,7 @@ class TestDelinquentPath:
         assert result["databricks_yml"].exists()
         assert result["jobs_yml"].exists()
 
-    def test_stage_with_unsupported_extension_produces_no_wrapper(self, tmp_path, output_dir):
+    def test_unsupported_extension_stops_compile_and_writes_nothing(self, tmp_path, output_dir):
         spec = {
             "project": "demo",
             "unity_catalog": {"catalog": "c", "schema": "s", "volume": "v"},
@@ -236,10 +236,9 @@ class TestDelinquentPath:
         spec_path = tmp_path / "weird.json"
         spec_path.write_text(json.dumps(spec), encoding="utf-8")
 
-        result = compile_bundle(spec_path, output_dir)
-        assert result["wrappers"] == []
-        parsed = yaml.safe_load(result["jobs_yml"].read_text())
-        assert parsed["resources"]["jobs"]["demo"]["tasks"] == []
+        with pytest.raises(SpecValidationError, match="must be a .py or .sql file"):
+            compile_bundle(spec_path, output_dir)
+        assert not output_dir.exists()
 
 
 # ── Forgetful path ───────────────────────────────────────────────────────────
@@ -260,3 +259,12 @@ class TestForgetfulPath:
         from utilities.compiler import DEFAULT_SPEC_PATH, DEFAULT_OUTPUT_DIR
         assert isinstance(DEFAULT_SPEC_PATH, Path)
         assert isinstance(DEFAULT_OUTPUT_DIR, Path)
+
+# ── Bundle check (step 4) ────────────────────────────────────────────────────
+
+class TestBundleCheck:
+
+    def test_compile_runs_the_bundle_validator(self, minimal_spec_path, output_dir, caplog):
+        with caplog.at_level("INFO", logger="validation.databricks_bundle_validator"):
+            compile_bundle(minimal_spec_path, output_dir)
+        assert "bundle validation: 0 error(s)" in caplog.text

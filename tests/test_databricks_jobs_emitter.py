@@ -73,8 +73,8 @@ def test_happy_path_single_task(spec_one_task):
     """One stage with one script produces exactly one task that points at the wrapper."""
     parsed = yaml.safe_load(build_jobs_yml(spec_one_task, WRAPPER_DIR, WRAPPER_PREFIX))
     tasks = parsed["resources"]["jobs"]["demo"]["tasks"]
-    assert len(tasks) == 1
-    assert tasks[0]["spark_python_task"]["python_file"] == (
+    assert len(tasks) == 2
+    assert tasks[1]["spark_python_task"]["python_file"] == (
         f"{WRAPPER_DIR}/{WRAPPER_PREFIX}bronze_get_raw_fetch_py.py"
     )
 
@@ -101,7 +101,7 @@ def test_task_key_follows_layer_stage_file_convention(spec_one_task):
     """Convention: <layer>_<stage>_<script_stem>."""
     parsed = yaml.safe_load(build_jobs_yml(spec_one_task, WRAPPER_DIR, WRAPPER_PREFIX))
     tasks = parsed["resources"]["jobs"]["demo"]["tasks"]
-    assert tasks[0]["task_key"] == "bronze_get_raw_fetch_py"
+    assert tasks[1]["task_key"] == "bronze_get_raw_fetch_py"
 
 
 # HAPPY PATH — parameters are passed through exactly as entered, nothing prepended.
@@ -121,7 +121,7 @@ def test_custom_wrapper_dir_and_prefix(spec_one_task):
         build_jobs_yml(spec_one_task, "../lib/runners", "exec_")
     )
     tasks = parsed["resources"]["jobs"]["demo"]["tasks"]
-    assert tasks[0]["spark_python_task"]["python_file"] == (
+    assert tasks[1]["spark_python_task"]["python_file"] == (
         "../lib/runners/exec_bronze_get_raw_fetch_py.py"
     )
 
@@ -137,5 +137,5 @@ def test_sql_task_gets_catalog_and_schema():
         }],
     }
     parsed = yaml.safe_load(build_jobs_yml(spec, WRAPPER_DIR, WRAPPER_PREFIX))
-    params = parsed["resources"]["jobs"]["demo"]["tasks"][0]["spark_python_task"]["parameters"]
+    params = parsed["resources"]["jobs"]["demo"]["tasks"][1]["spark_python_task"]["parameters"]
     assert params == ["${var.catalog}", "${var.schema}"]

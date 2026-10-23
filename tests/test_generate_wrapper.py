@@ -82,7 +82,7 @@ class TestHappyPath:
             multi_stage_spec, tmp_path,
             wrapper_prefix="run_", wrapper_depth=2,
         )
-        assert len(written) == 2
+        assert len(written) == 3          # preflight + the two stages
         for path in written:
             assert path.exists()
             assert path.name.startswith("run_")
@@ -257,3 +257,80 @@ class TestForgetfulPath:
             "entry_point": {"file": "x.py"},  # no path
         }
         assert produce_wrapper(stage, wrapper_depth=2) is None
+
+# ── Orion checks inside the wrapper ─────────────────────────────────────────
+
+REPO = Path(__file__).resolve().parent.parent      # so the wrapper can import `validation`
+
+
+def _run_wrapper(tmp_path, script_body, *args):
+    """Write a script + its wrapper in tmp_path and run the wrapper. Returns the CompletedProcess."""
+    import os, subprocess, sys
+    (tmp_path / "s.py").write_text(script_body, encoding="utf-8")
+    stage = {"name": "s", "layer": "l", "entry_point": {"file": "s.py", "path": "s.py"}}
+    (tmp_path / "w").mkdir(exist_ok=True)
+    wrapper = tmp_path / "w" / "run.py"
+    wrapper.write_text(produce_wrapper(stage, wrapper_depth=1), encoding="utf-8")
+    env = {**os.environ, "PYTHONPATH": str(REPO)}
+    return subprocess.run([sys.executable, str(wrapper), *args],
+                          capture_output=True, text=True, env=env)
+
+
+class TestOrionChecks:
+
+    # writes x.csv into the folder given as argv[1]
+    WRITE_ONE = "import sys, pathlib; pathlib.Path(sys.argv[1], 'x.csv').write_text('a\\n1\\n')\n"
+
+    def test_good_run_moves_output_in(self, tmp_path):
+        out = tmp_path / "out"
+        r = _run_wrapper(tmp_path, self.WRITE_ONE, str(out), f"ORION_OUTPUT={out}")
+        assert r.returncode == 0, r.stderr
+        assert (out / "x.csv").exists()
+        assert not Path(str(out) + ".__orion_staging__").exists()
+
+    def test_script_is_pointed_at_the_holding_folder(self, tmp_path):
+        script = "import os, sys, json; print(json.dumps([sys.argv[1:], os.environ.get('OUT_DIR')]))\n"
+        out = tmp_path / "out"
+        (Path(str(out) + ".__orion_staging__")).mkdir(parents=True)   # pre-seed so "wrote nothing" is the only failure
+        r = _run_wrapper(tmp_path, script, str(out) + "/control", f"OUT_DIR={out}", f"ORION_OUTPUT={out}")
+        import json
+        argv, out_dir = json.loads(r.stdout.strip().splitlines()[-1])
+        staging = str(out) + ".__orion_staging__"
+        assert argv == [staging + "/control"] and out_dir == staging
+
+    def test_orion_params_are_not_passed_to_the_script(self, tmp_path):
+        script = "import os, sys, json; print(json.dumps([sys.argv[1:], os.environ.get('ORION_INPUT')]))\n"
+        inp = tmp_path / "in"; inp.mkdir(); (inp / "a.csv").write_text("a\n1\n")
+        r = _run_wrapper(tmp_path, script, "1", f"ORION_INPUT={inp}|manual upload")
+        assert r.returncode == 0, r.stderr
+        import json
+        assert json.loads(r.stdout.strip().splitlines()[-1]) == [["1"], None]
+
+    def test_missing_input_stops_before_the_script(self, tmp_path):
+        script = "open('ran.txt', 'w').write('yes')\n"
+        r = _run_wrapper(tmp_path, script, f"ORION_INPUT={tmp_path / 'nope'}|upstream task bronze_x_py")
+        assert r.returncode != 0
+        assert "not found" in r.stderr and "bronze_x_py" in r.stderr
+        assert not (tmp_path / "ran.txt").exists()
+
+    def test_existing_files_are_fine(self, tmp_path):
+        out = tmp_path / "out"; out.mkdir(); (out / "old.csv").write_text("a\n1\n")
+        r = _run_wrapper(tmp_path, self.WRITE_ONE, str(out), f"ORION_OUTPUT={out}")
+        assert r.returncode == 0, r.stderr
+        assert (out / "old.csv").exists() and (out / "x.csv").exists()
+
+    def test_same_name_file_is_not_overwritten(self, tmp_path):
+        out = tmp_path / "out"; out.mkdir(); (out / "x.csv").write_text("old\n")
+        r = _run_wrapper(tmp_path, self.WRITE_ONE, str(out), f"ORION_OUTPUT={out}")
+        assert r.returncode != 0 and "same name" in r.stderr
+        assert (out / "x.csv").read_text() == "old\n"
+
+    def test_script_that_writes_nothing_fails_after(self, tmp_path):
+        r = _run_wrapper(tmp_path, "pass\n", f"ORION_OUTPUT={tmp_path / 'out'}")
+        assert r.returncode != 0 and "wrote nothing" in r.stderr
+
+    def test_sql_wrapper_reads_catalog_schema_after_orion_params_removed(self):
+        code = produce_wrapper({"name": "t", "layer": "b",
+                                "entry_point": {"file": "a.sql", "path": "a.sql"}}, wrapper_depth=2)
+        assert "catalog = rest[0]" in code and "schema  = rest[1]" in code
+        assert "sys.path.insert(0, str(_REPO_ROOT))" in code

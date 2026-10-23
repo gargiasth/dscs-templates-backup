@@ -14,14 +14,14 @@
       }
     ],
     "orchestrator": "databricks_jobs",
-    "workspace_url": "https://dbc-085b91a0-8021.cloud.databricks.com"
+    "workspace_url": "https://adb-1234567890.12.azuredatabricks.net"
   },
   "unity_catalog": {
     "catalog": "etl_cms",
     "schema": "ohdsi_cdm",
     "volume": "ohdsi_volume",
     "ddl_files": [
-      "create_CDMv5_tables.sql"
+      "src/CMS SynPUF ETL/SQL/create_CDMv5_tables.sql"
     ],
     "gold_tables": [
       "concept",
@@ -63,85 +63,130 @@
       "drug_era",
       "dose_era",
       "condition_era"
+    ],
+    "folders": [
+      {
+        "volume": "ohdsi_volume",
+        "subfolder": "control"
+      },
+      {
+        "volume": "ohdsi_volume",
+        "subfolder": "tmp"
+      }
     ]
   },
   "stages": [
     {
       "name": "table_setup",
       "layer": "bronze",
-      "sources": [
-        {
-          "data_upload_type": "custom_script",
-          "subfolder_name": null,
-          "scripts": [
-            {
-              "file": "create_CDMv5_tables.sql",
-              "path": "tests/test_data/create_CDMv5_tables.sql",
-              "parameters": []
-            }
-          ]
-        }
-      ],
+      "sources": [],
       "entry_point": {
         "file": "create_CDMv5_tables.sql",
-        "path": "tests/test_data/create_CDMv5_tables.sql",
+        "path": "src/CMS SynPUF ETL/SQL/create_CDMv5_tables.sql",
         "parameters": []
       },
       "destination": {
-        "type": "tables"
+        "type": "tables",
+        "catalog": "etl_cms",
+        "schema": "ohdsi_cdm"
       }
     },
     {
       "name": "bronze",
       "layer": "bronze",
-      "sources": [
-        {
-          "data_upload_type": "custom_script",
-          "subfolder_name": "synpuf_raw",
-          "scripts": [
-            {
-              "file": "get_synpuf_files.py",
-              "parameters": [
-                "all"
-              ]
-            }
-          ]
-        }
-      ],
+      "sources": [],
       "entry_point": {
         "file": "get_synpuf_files.py",
         "path": "src/CMS SynPUF ETL/scripts/get_synpuf_files.py",
+        "parameters": []
+      },
+      "destination": {
+        "type": "volume",
+        "subfolder_name": "synpuf_raw"
+      }
+    },
+    {
+      "name": "silver",
+      "layer": "silver",
+      "sources": [
+        {
+          "data_upload_type": "auto",
+          "from": "bronze"
+        }
+      ],
+      "entry_point": {
+        "file": "CMS_SynPuf_ETL_CDM_v5.py",
+        "path": "src/CMS SynPUF ETL/python_etl/CMS_SynPuf_ETL_CDM_v5.py",
         "parameters": [
-          "${var.synpuf_raw_subfolder_path}",
-          "1"
+          "TEST=${var.synpuf_raw_subfolder_path}"
         ]
       },
       "destination": {
-        "type": "volume"
+        "type": "volume",
+        "subfolder_name": "silver_output"
       }
     },
-
-  {
-    "name": "etl",
-    "layer": "silver",
-    "sources": [{"data_upload_type": "auto", "from": "bronze"}],
-    "entry_point": {
-      "file": "CMS_SynPuf_ETL_CDM_v5.py",
-      "path": "src/CMS_SynPuf_ETL_CDM_v5.py",
-      "parameters": [
-        "1",
-        "BASE_SYNPUF_INPUT_DIRECTORY=${var.synpuf_raw_subfolder_path}",
-        "BASE_OUTPUT_DIRECTORY=${var.etl_output_subfolder_path}",
-        "BASE_ETL_CONTROL_DIRECTORY=${var.etl_output_subfolder_path}/control",
-        "BASE_OMOP_INPUT_DIRECTORY=${var.omop_vocabulary_subfolder_path}",
-        "SYNPUF_DIR_FORMAT=DE_{0}"
-      ]
-    },
-    
-    "destination": {"type": "volume", "subfolder_name": "etl_output"}
-  }
-    
-    
+    {
+      "name": "gold",
+      "layer": "gold",
+      "sources": [
+        {
+          "data_upload_type": "auto",
+          "from": "silver"
+        },
+        {
+          "data_upload_type": "auto",
+          "from": "table_setup"
+        }
+      ],
+      "entry_point": "entry_point_default",
+      "destination": {
+        "type": "tables",
+        "catalog": "etl_cms",
+        "schema": "ohdsi_cdm",
+        "tables": [
+          "concept",
+          "vocabulary",
+          "domain",
+          "concept_class",
+          "concept_relationship",
+          "relationship",
+          "concept_synonym",
+          "concept_ancestor",
+          "source_to_concept_map",
+          "drug_strength",
+          "cohort_definition",
+          "attribute_definition",
+          "cdm_source",
+          "person",
+          "observation_period",
+          "specimen",
+          "death",
+          "visit_occurrence",
+          "procedure_occurrence",
+          "drug_exposure",
+          "device_exposure",
+          "condition_occurrence",
+          "measurement_occurrence",
+          "note",
+          "observation",
+          "fact_relationship",
+          "location",
+          "care_site",
+          "provider",
+          "payer_plan_period",
+          "visit_cost",
+          "procedure_cost",
+          "drug_cost",
+          "device_cost",
+          "cohort",
+          "cohort_attribute",
+          "drug_era",
+          "dose_era",
+          "condition_era"
+        ]
+      }
+    }
   ],
-  "generated": "2026-10-15"
+  "generated": "2026-10-21"
 }

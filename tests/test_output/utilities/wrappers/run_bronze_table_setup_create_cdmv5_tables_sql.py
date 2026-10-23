@@ -6,7 +6,7 @@ from utilities.sql_read import read_sql_file
 from utilities.sql_translate import translate
 from utilities.sql_execute import execute_statements
 
-_SQL_PATH = Path(__file__).parent.parent.parent / "tests/test_data/create_CDMv5_tables.sql"
+_SQL_PATH = Path(__file__).parent.parent.parent / "src/CMS SynPUF ETL/SQL/create_CDMv5_tables.sql"
 
 if len(sys.argv) < 3:
     sys.exit("usage: <wrapper> <catalog> <schema>")

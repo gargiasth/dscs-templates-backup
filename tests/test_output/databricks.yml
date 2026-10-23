@@ -7,14 +7,18 @@ variables:
     default: ohdsi_cdm
   volume:
     default: ohdsi_volume
+  control_subfolder_path:
+    default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/control
+  tmp_subfolder_path:
+    default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/tmp
   synpuf_raw_subfolder_path:
     default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/synpuf_raw
-  etl_output_subfolder_path:
-    default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/etl_output
+  silver_output_subfolder_path:
+    default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/silver_output
 include:
 - resources/*.yml
 targets:
   dev:
     default: true
     workspace:
-      host: https://dbc-085b91a0-8021.cloud.databricks.com
+      host: https://adb-1234567890.12.azuredatabricks.net
