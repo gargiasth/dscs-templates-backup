@@ -28,7 +28,9 @@ Public API:
 """
 
 import logging
+import re
 import shutil
+import tempfile
 from pathlib import Path
 
 from utilities.logger import setup_logging
@@ -37,7 +39,7 @@ from validation.input_validator import _files
 setup_logging()
 log = logging.getLogger(__name__)
 
-STAGING_SUFFIX = ".__orion_staging__"   # holding folder: <output>.__orion_staging__
+STAGING_ROOT   = Path(tempfile.gettempdir()) / "orion_staging"   # local disk, e.g. /tmp/orion_staging
 MARKER         = ".orion_write_check"   # written and deleted to prove a folder is writable
 MAX_LISTED     = 5                      # clashing file names shown in the error
 
@@ -56,8 +58,9 @@ def _privilege(platform: str) -> str:
 
 
 def staging_path(out) -> Path:
-    """The holding folder for an output folder: a sibling, so moving files in is a rename."""
-    return Path(str(out).rstrip("/\\") + STAGING_SUFFIX)
+    """The local holding folder for an output folder, named after its full path so two outputs never share one."""
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", str(out).strip("/\\")) or "output"
+    return STAGING_ROOT / name
 
 
 def _check_writable(folder: Path, platform: str) -> None:
@@ -111,8 +114,7 @@ def finish_output(out, staging) -> list[Path]:
         more = f" and {len(clashes) - MAX_LISTED} more" if len(clashes) > MAX_LISTED else ""
         raise OutputValidationError(
             f"{len(clashes)} new file(s) have the same name as files already in {out}: {shown}{more}. "
-            f"Nothing was overwritten; the new files are kept in {staging}. "
-            f"Remove or rename the old files (or the new ones), then rerun.")
+            f"Nothing was overwritten. Remove or rename the old files, then rerun.")
 
     moved = []
     for src, r in zip(new_files, rel):

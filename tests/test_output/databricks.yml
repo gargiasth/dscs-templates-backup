@@ -2,23 +2,25 @@ bundle:
   name: etl-cms-ohdsi
 variables:
   catalog:
-    default: etl_cms
+    default: etl_cms_test
   schema:
-    default: ohdsi_cdm
+    default: ohdsi_cdm_test
   volume:
-    default: ohdsi_volume
+    default: ohdsi_volume_test
   control_subfolder_path:
-    default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/control
+    default: /Volumes/etl_cms_test/ohdsi_cdm_test/ohdsi_volume_test/control
+  omop_tables_subfolder_path:
+    default: /Volumes/etl_cms_test/ohdsi_cdm_test/ohdsi_volume_test/omop_tables
   tmp_subfolder_path:
-    default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/tmp
-  synpuf_raw_subfolder_path:
-    default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/synpuf_raw
+    default: /Volumes/etl_cms_test/ohdsi_cdm_test/ohdsi_volume_test/tmp
+  raw_data_subfolder_path:
+    default: /Volumes/etl_cms_test/ohdsi_cdm_test/ohdsi_volume_test/raw_data
   silver_output_subfolder_path:
-    default: /Volumes/etl_cms/ohdsi_cdm/ohdsi_volume/silver_output
+    default: /Volumes/etl_cms_test/ohdsi_cdm_test/ohdsi_volume_test/silver_output
 include:
 - resources/*.yml
 targets:
   dev:
     default: true
     workspace:
-      host: https://adb-1234567890.12.azuredatabricks.net
+      host: https://dbc-085b91a0-8021.cloud.databricks.com

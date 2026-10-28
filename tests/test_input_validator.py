@@ -110,7 +110,17 @@ class TestDesolatePath:
     def test_header_but_no_rows(self, tmp_path):
         write(tmp_path / "in" / "a.csv", "id,name\n")
         write(tmp_path / "in" / "b.csv", "id\n1\n")          # keeps the folder non-empty
-        assert any("no data rows" in e for e in errors([(tmp_path / "in", "manual upload")]))
+        report = validate_inputs([(tmp_path / "in", "manual upload")])
+        assert report.errors == []                                  # an empty table is allowed...
+        assert any("no data rows" in w for w in report.warnings)   # ...but reported
+
+    def test_zero_byte_file_next_to_data_is_a_warning(self, tmp_path):
+        # upstream steps can write empty files (e.g. beneficiary_dump_1.txt)
+        write(tmp_path / "in" / "dump.txt", "")
+        write(tmp_path / "in" / "b.csv", "id\n1\n")
+        report = validate_inputs([(tmp_path / "in", "upstream task etl")])
+        assert report.errors == []
+        assert any("file is empty" in w for w in report.warnings)
 
 
 # ── Delinquent path ──────────────────────────────────────────────────────────
@@ -130,6 +140,18 @@ class TestDelinquentPath:
         p.parent.mkdir()
         p.write_bytes(b"PK\x03\x04 not really a zip")
         assert errors([(tmp_path / "in", "manual upload")]) == []
+
+    def test_problems_in_a_txt_log_are_warnings(self, tmp_path):
+        # an ETL debug log that happens to look delimited must not stop the task
+        write(tmp_path / "in" / "concept_debug_log.txt", "a,b,c,,e\n1,2,3,4,5\n6,7,8,9,10\n")
+        write(tmp_path / "in" / "person.csv", "id\n1\n")
+        report = validate_inputs([(tmp_path / "in", "upstream task etl")])
+        assert report.errors == []
+        assert any("has no name" in w for w in report.warnings)
+
+    def test_problems_in_a_csv_are_still_errors(self, tmp_path):
+        write(tmp_path / "in" / "a.csv", "a,b,c,,e\n1,2,3,4,5\n")
+        assert any("has no name" in e for e in errors([(tmp_path / "in", "manual upload")]))
 
     def test_plain_text_txt_is_skipped(self, tmp_path):
         write(tmp_path / "in" / "README.txt", "This folder holds the raw files")

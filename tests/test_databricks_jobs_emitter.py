@@ -104,14 +104,15 @@ def test_task_key_follows_layer_stage_file_convention(spec_one_task):
     assert tasks[1]["task_key"] == "bronze_get_raw_fetch_py"
 
 
-# HAPPY PATH — parameters are passed through exactly as entered, nothing prepended.
+# HAPPY PATH — parameters are passed through exactly as entered; Orion's check params come after.
 def test_parameters_passed_through_unchanged(spec_two_stages):
-    """entry_point.parameters reach the task unchanged."""
+    """entry_point.parameters reach the task unchanged, followed by the ORION_OUTPUT check param."""
     parsed = yaml.safe_load(build_jobs_yml(spec_two_stages, WRAPPER_DIR, WRAPPER_PREFIX))
     tasks = parsed["resources"]["jobs"]["demo"]["tasks"]
 
     silver_task = next(t for t in tasks if t["task_key"].startswith("silver_"))
-    assert silver_task["spark_python_task"]["parameters"] == ["1"]
+    assert silver_task["spark_python_task"]["parameters"] == [
+        "1", "ORION_OUTPUT=${var.clean_subfolder_path}"]
 
 
 # HAPPY PATH — custom wrapper_dir and wrapper_prefix are respected in the output.
@@ -139,3 +140,98 @@ def test_sql_task_gets_catalog_and_schema():
     parsed = yaml.safe_load(build_jobs_yml(spec, WRAPPER_DIR, WRAPPER_PREFIX))
     params = parsed["resources"]["jobs"]["demo"]["tasks"][1]["spark_python_task"]["parameters"]
     assert params == ["${var.catalog}", "${var.schema}"]
+
+# ── Orion input/output check parameters ─────────────────────────────────────
+
+def _io_spec():
+    return {
+        "project": "demo",
+        "unity_catalog": {"catalog": "c", "schema": "s", "volume": "v",
+                          "folders": [{"volume": "v", "subfolder": "vocab"}]},
+        "stages": [
+            {"name": "fetch", "layer": "bronze",
+             "entry_point": {"file": "get.py", "path": "src/get.py", "parameters": []},
+             "destination": {"type": "volume", "subfolder_name": "raw"}},
+            {"name": "etl", "layer": "silver",
+             "sources": [{"data_upload_type": "auto", "from": "fetch"},
+                         {"data_upload_type": "manual", "subfolder_name": "vocab"}],
+             "entry_point": {"file": "etl.py", "path": "src/etl.py", "parameters": ["1"]},
+             "destination": {"type": "volume", "subfolder_name": "out"}},
+            {"name": "load", "layer": "gold",
+             "sources": [{"data_upload_type": "auto", "from": "etl"}],
+             "entry_point": {"file": "load.py", "path": "src/load.py", "parameters": []},
+             "destination": {"type": "tables", "tables": ["person"]}},
+        ],
+    }
+
+
+def _params_of(spec, prefix):
+    parsed = yaml.safe_load(build_jobs_yml(spec, WRAPPER_DIR, WRAPPER_PREFIX))
+    task = next(t for t in parsed["resources"]["jobs"]["demo"]["tasks"] if t["task_key"].startswith(prefix))
+    return task["spark_python_task"]["parameters"]
+
+
+def test_output_folder_becomes_orion_output():
+    assert _params_of(_io_spec(), "bronze_") == ["ORION_OUTPUT=${var.raw_subfolder_path}"]
+
+
+def test_upstream_and_manual_inputs_become_orion_input():
+    assert _params_of(_io_spec(), "silver_") == [
+        "1",
+        "ORION_INPUT=${var.raw_subfolder_path}|upstream task bronze_fetch_get_py",
+        "ORION_INPUT=${var.vocab_subfolder_path}|manual upload",
+        "ORION_OUTPUT=${var.out_subfolder_path}",
+    ]
+
+
+def test_tables_destination_has_no_orion_output():
+    # gold writes tables, so only its upstream folder is checked
+    assert _params_of(_io_spec(), "gold_") == [
+        "ORION_INPUT=${var.out_subfolder_path}|upstream task silver_etl_etl_py"]
+
+
+def test_upstream_without_output_folder_is_not_checked(spec_two_stages):
+    # fetch has no destination subfolder, so there is no folder to check for transform
+    params = _params_of(spec_two_stages, "silver_")
+    assert not any(p.startswith("ORION_INPUT=") for p in params)
+
+
+
+def test_preflight_creates_every_folder_the_spec_names():
+    parsed = yaml.safe_load(build_jobs_yml(_io_spec(), WRAPPER_DIR, WRAPPER_PREFIX))
+    preflight = parsed["resources"]["jobs"]["demo"]["tasks"][0]
+    assert preflight["spark_python_task"]["parameters"] == [
+        "${var.catalog}", "${var.schema}", "${var.volume}",
+        "ORION_FOLDER=${var.vocab_subfolder_path}",
+        "ORION_FOLDER=${var.raw_subfolder_path}",
+        "ORION_FOLDER=${var.out_subfolder_path}",
+    ]
+
+
+# ── Environment dependencies ─────────────────────────────────────────────────
+
+def _deps(spec, **kw):
+    parsed = yaml.safe_load(build_jobs_yml(spec, WRAPPER_DIR, WRAPPER_PREFIX, **kw))
+    return parsed["resources"]["jobs"]["demo"]["environments"][0]["spec"]["dependencies"]
+
+
+def test_sqlglot_is_always_a_dependency(spec_one_task):
+    assert _deps(spec_one_task) == ["sqlglot"]
+
+
+def test_requirements_are_added_once(spec_one_task, tmp_path):
+    req = tmp_path / "requirements.txt"
+    req.write_text("python-dotenv\nsqlglot\npandas==2.2.2\n")
+    assert _deps(spec_one_task, requirements_path=req) == ["sqlglot", "python-dotenv", "pandas==2.2.2"]
+
+
+def test_requirements_skip_comments_blanks_and_pip_options(spec_one_task, tmp_path, caplog):
+    req = tmp_path / "requirements.txt"
+    req.write_text("# deps\n\npandas  # data\n-r other.txt\n")
+    assert _deps(spec_one_task, requirements_path=req) == ["sqlglot", "pandas"]
+    assert "skipped pip option" in caplog.text
+
+
+def test_missing_requirements_file_warns(spec_one_task, tmp_path, caplog):
+    assert _deps(spec_one_task, requirements_path=tmp_path / "nope.txt") == ["sqlglot"]
+    assert "not found" in caplog.text

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from validation.output_validator import (
-    prepare_output, finish_output, staging_path, OutputValidationError, MARKER,
+    prepare_output, finish_output, staging_path, OutputValidationError, MARKER, STAGING_ROOT,
 )
 
 
@@ -27,11 +27,15 @@ class TestPrepareOutput:
         prepare_output(out)
         assert out.is_dir()
 
-    def test_returns_an_empty_holding_folder_next_to_it(self, tmp_path):
+    def test_returns_an_empty_local_holding_folder(self, tmp_path):
+        # held on local disk, not next to the output: volumes stall on long-held file handles
         out = tmp_path / "etl_output"
         staging = prepare_output(out)
-        assert staging == staging_path(out) and staging.parent == out.parent
+        assert staging == staging_path(out) and staging.parent == STAGING_ROOT
         assert list(staging.iterdir()) == []
+
+    def test_two_outputs_get_different_holding_folders(self, tmp_path):
+        assert staging_path(tmp_path / "a" / "out") != staging_path(tmp_path / "b" / "out")
 
     def test_existing_files_are_allowed(self, tmp_path):
         write(tmp_path / "out" / "old.csv")

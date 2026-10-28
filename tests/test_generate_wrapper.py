@@ -70,11 +70,11 @@ class TestHappyPath:
 
     def test_wrapper_depth_2_emits_three_parents(self, py_stage):
         code = produce_wrapper(py_stage, wrapper_depth=2)
-        assert "Path(__file__).parent.parent.parent" in code
+        assert "_HERE.parent.parent.parent" in code
 
     def test_wrapper_depth_0_emits_one_parent(self, py_stage):
         code = produce_wrapper(py_stage, wrapper_depth=0)
-        assert "Path(__file__).parent" in code
+        assert "_REPO_ROOT = _HERE.parent\n" in code
         assert ".parent.parent" not in code
 
     def test_write_all_wrappers_creates_one_file_per_stage(self, multi_stage_spec, tmp_path):
@@ -262,6 +262,8 @@ class TestForgetfulPath:
 
 REPO = Path(__file__).resolve().parent.parent      # so the wrapper can import `validation`
 
+from validation.output_validator import staging_path
+
 
 def _run_wrapper(tmp_path, script_body, *args):
     """Write a script + its wrapper in tmp_path and run the wrapper. Returns the CompletedProcess."""
@@ -286,16 +288,15 @@ class TestOrionChecks:
         r = _run_wrapper(tmp_path, self.WRITE_ONE, str(out), f"ORION_OUTPUT={out}")
         assert r.returncode == 0, r.stderr
         assert (out / "x.csv").exists()
-        assert not Path(str(out) + ".__orion_staging__").exists()
+        assert not staging_path(out).exists()          # holding folder cleaned up
 
     def test_script_is_pointed_at_the_holding_folder(self, tmp_path):
         script = "import os, sys, json; print(json.dumps([sys.argv[1:], os.environ.get('OUT_DIR')]))\n"
         out = tmp_path / "out"
-        (Path(str(out) + ".__orion_staging__")).mkdir(parents=True)   # pre-seed so "wrote nothing" is the only failure
         r = _run_wrapper(tmp_path, script, str(out) + "/control", f"OUT_DIR={out}", f"ORION_OUTPUT={out}")
         import json
         argv, out_dir = json.loads(r.stdout.strip().splitlines()[-1])
-        staging = str(out) + ".__orion_staging__"
+        staging = str(staging_path(out))                # local holding folder, not on the volume
         assert argv == [staging + "/control"] and out_dir == staging
 
     def test_orion_params_are_not_passed_to_the_script(self, tmp_path):
@@ -334,3 +335,19 @@ class TestOrionChecks:
                                 "entry_point": {"file": "a.sql", "path": "a.sql"}}, wrapper_depth=2)
         assert "catalog = rest[0]" in code and "schema  = rest[1]" in code
         assert "sys.path.insert(0, str(_REPO_ROOT))" in code
+
+
+# ── Runs without __file__ (how Databricks serverless executes spark_python_task) ──
+
+def test_wrappers_find_their_repo_root_without_dunder_file(tmp_path):
+    """Databricks runs the wrapper via exec(compile(src, filename, 'exec')) with no __file__."""
+    stage = {"name": "s", "layer": "l", "entry_point": {"file": "a.py", "path": "a.py"}}
+    wrapper = tmp_path / "utilities" / "wrappers" / "run.py"
+    wrapper.parent.mkdir(parents=True)
+    code = produce_wrapper(stage, wrapper_depth=2)
+    wrapper.write_text(code, encoding="utf-8")
+    # run only the lines up to _REPO_ROOT, exactly the way Databricks does
+    head = code.split("_SCRIPT =")[0]
+    ns = {"__name__": "__main__"}
+    exec(compile(head, str(wrapper), "exec"), ns)
+    assert ns["_REPO_ROOT"] == tmp_path

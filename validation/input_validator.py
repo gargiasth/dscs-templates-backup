@@ -117,7 +117,7 @@ def _check_file(path: Path, report, max_rows: int, platform: str) -> None:
         log.info("skipped (not a type Orion checks): %s", path)
         return
     if path.stat().st_size == 0:
-        report.error(str(path), "file is empty")
+        report.warn(str(path), "file is empty")
         return
 
     with open(path, "rb") as f:
@@ -145,7 +145,10 @@ def _check_delimited(path: Path, report, max_rows: int) -> None:
             if dialect is None:
                 return                                    # free text .txt, nothing to check
             f.seek(0)
-            _check_rows(csv.reader(f, dialect), where, report, max_rows)
+            # .txt files are often logs a script writes for itself (e.g. concept_debug_log.txt):
+            # check them, but a problem there is a warning, never a reason to stop the task
+            strict = path.suffix.lower() == ".csv"
+            _check_rows(csv.reader(f, dialect), where, report, max_rows, strict)
     except UnicodeDecodeError:
         report.warn(where, "is not valid UTF-8; not checked (some scripts read other encodings on purpose)")
 
@@ -161,10 +164,11 @@ def _sniff(sample: str, path: Path):
         return csv.excel                                  # .csv with one column: plain commas
 
 
-def _check_rows(reader, where, report, max_rows: int) -> None:
+def _check_rows(reader, where, report, max_rows: int, strict: bool = True) -> None:
+    problem = report.error if strict else report.warn      # .txt: warnings only
     header = next(reader, None)
     if not header:
-        report.error(where, "has no header row")
+        problem(where, "has no header row")
         return
 
     # header: no empty names, no repeats (case-insensitive)
@@ -172,9 +176,9 @@ def _check_rows(reader, where, report, max_rows: int) -> None:
     for i, name in enumerate(header, start=1):
         clean = name.strip()
         if not clean:
-            report.error(where, f"header column {i} has no name")
+            problem(where, f"header column {i} has no name")
         elif clean.lower() in seen:
-            report.error(where, f"header column {clean!r} appears more than once "
+            problem(where, f"header column {clean!r} appears more than once "
                                 f"(columns {seen[clean.lower()]} and {i})")
         else:
             seen[clean.lower()] = i
@@ -188,11 +192,11 @@ def _check_rows(reader, where, report, max_rows: int) -> None:
         if len(row) != len(header):
             bad += 1
             if bad <= MAX_ROW_ERRS:
-                report.error(where, f"line {reader.line_num}: {len(row)} field(s), "
+                problem(where, f"line {reader.line_num}: {len(row)} field(s), "
                                     f"header has {len(header)}")
         if rows >= max_rows:
             break
     if bad > MAX_ROW_ERRS:
-        report.error(where, f"{bad - MAX_ROW_ERRS} more line(s) with the wrong number of fields")
+        problem(where, f"{bad - MAX_ROW_ERRS} more line(s) with the wrong number of fields")
     if rows == 0:
-        report.error(where, "has a header but no data rows")
+        report.warn(where, "has a header but no data rows")

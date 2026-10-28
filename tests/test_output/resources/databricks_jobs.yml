@@ -6,7 +6,7 @@ resources:
       - environment_key: default_env
         spec:
           client: '3'
-          dependencies: []
+          dependencies: [sqlglot, python-dotenv]
       tasks:
       - task_key: orion_preflight
         environment_key: default_env
@@ -29,7 +29,10 @@ resources:
         environment_key: default_env
         spark_python_task:
           python_file: ../utilities/wrappers/run_bronze_bronze_get_synpuf_files_py.py
-          parameters: []
+          parameters:
+          - ${var.raw_data_subfolder_path}
+          - '1'
+          - ORION_OUTPUT=${var.raw_data_subfolder_path}
         depends_on:
         - task_key: orion_preflight
       - task_key: silver_silver_cms_synpuf_etl_cdm_v5_py
@@ -37,6 +40,13 @@ resources:
         spark_python_task:
           python_file: ../utilities/wrappers/run_silver_silver_cms_synpuf_etl_cdm_v5_py.py
           parameters:
-          - TEST=${var.synpuf_raw_subfolder_path}
+          - '1'
+          - BASE_SYNPUF_INPUT_DIRECTORY=${var.raw_data_subfolder_path}
+          - BASE_OUTPUT_DIRECTORY=${var.silver_output_subfolder_path}
+          - BASE_ETL_CONTROL_DIRECTORY=${var.control_subfolder_path}
+          - BASE_OMOP_INPUT_DIRECTORY=${var.omop_tables_subfolder_path}
+          - SYNPUF_DIR_FORMAT=DE_{0}
+          - ORION_INPUT=${var.raw_data_subfolder_path}|upstream task bronze_bronze_get_synpuf_files_py
+          - ORION_OUTPUT=${var.silver_output_subfolder_path}
         depends_on:
         - task_key: bronze_bronze_get_synpuf_files_py

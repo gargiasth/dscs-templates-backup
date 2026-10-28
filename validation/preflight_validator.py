@@ -19,11 +19,12 @@ Container names, per platform:
     volume       volume       stage
 
 Public API:
-    preflight(session, catalog, schema, volumes, platform="databricks") -> None
+    preflight(session, catalog, schema, volumes, platform="databricks", folders=()) -> None
     ValidationError
 """
 
 import logging
+import os
 
 from utilities.logger import setup_logging
 
@@ -46,6 +47,7 @@ _PLATFORMS = {
     "databricks": {
         "quote": "`",
         "words": {"catalog": "catalog", "schema": "schema", "volume": "volume"},
+        "write_privilege": "WRITE VOLUME on the volume",
         "show_catalog":   ("SHOW CATALOGS LIKE '{catalog}'", None),
         "create_catalog": ("CREATE CATALOG IF NOT EXISTS {q_catalog}",
                            "CREATE CATALOG on the metastore"),
@@ -53,7 +55,7 @@ _PLATFORMS = {
         "show_schema":    ("SHOW SCHEMAS IN {q_catalog} LIKE '{schema}'", None),
         "create_schema":  ("CREATE SCHEMA IF NOT EXISTS {q_catalog}.{q_schema}",
                            "CREATE SCHEMA on {catalog}"),
-        "use_schema":     ("USE SCHEMA {q_catalog}.{q_schema}", "USE SCHEMA on {catalog}.{schema}"),
+        "use_schema":     ("USE SCHEMA {q_schema}", "USE SCHEMA on {catalog}.{schema}"),   # catalog already set by USE CATALOG; UC rejects a two-part name here
         "show_volume":    ("SHOW VOLUMES IN {q_catalog}.{q_schema} LIKE '{volume}'", None),
         "create_volume":  ("CREATE VOLUME IF NOT EXISTS {q_catalog}.{q_schema}.{q_volume}",
                            "CREATE VOLUME on {catalog}.{schema}"),
@@ -66,8 +68,13 @@ _PLATFORMS = {
 
 # ── Public API ───────────────────────────────────────────────────────────────
 
-def preflight(session, catalog: str, schema: str, volumes, platform: str = "databricks") -> None:
-    """Make sure catalog -> schema -> every volume exist, in that order.
+def preflight(session, catalog: str, schema: str, volumes, platform: str = "databricks",
+              folders=()) -> None:
+    """Make sure catalog -> schema -> every volume -> every folder exist, in that order.
+
+    folders: full paths of the subfolders the spec names (folder registry,
+    inputs, outputs), so they exist before any stage runs and users can
+    upload into them.
 
     Creates whatever is missing. Raises ValidationError if something can't
     be created (usually a missing privilege, which the message names).
@@ -86,6 +93,8 @@ def preflight(session, catalog: str, schema: str, volumes, platform: str = "data
     _use(session, sql, "schema", names)
     for volume in volumes:
         _ensure(session, sql, "volume", _names(sql["quote"], catalog=catalog, schema=schema, volume=volume))
+    for folder in dict.fromkeys(f for f in folders if f):
+        _ensure_folder(folder, sql)
 
     log.info("preflight passed")
 
@@ -144,3 +153,16 @@ def _use(session, sql, kind: str, names: dict) -> None:
         return
     query, privilege = (s.format(**names) for s in step)
     _run(session, query, privilege, f"using {_label(sql, kind, names)}")
+
+
+def _ensure_folder(path: str, sql) -> None:
+    """Create a subfolder inside a volume if it's missing. Volumes are ordinary paths."""
+    if os.path.isdir(path):
+        log.info("found folder %s", path)
+        return
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        raise ValidationError(f"No permission for creating folder {path}. "
+                              f"Ask an admin for {sql['write_privilege']}.") from e
+    log.warning("Created folder %s", path)

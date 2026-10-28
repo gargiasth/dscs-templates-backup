@@ -117,13 +117,12 @@ def init_state():
     if "layers" not in st.session_state:
         bronze = new_layer("bronze", "bronze")
         silver = new_layer("silver", "silver", upstream_id=bronze["id"])
-        silver["destination"]["subfolder"] = "silver_output"
         gold   = new_layer("gold", "gold", upstream_id=silver["id"])
         st.session_state.layers = [bronze, silver, gold]
 
 
 CUSTOM = "Custom value…"
-ENV_RE = re.compile(r"^([A-Z_][A-Z0-9_]*)=(.*)$")     # NAME=value
+ENV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")   # name=value (any case)
 VAR_RE = re.compile(r"^\$\{var\.([a-z0-9_]+)\}$")     # ${var.name}
 
 
@@ -142,7 +141,7 @@ def render_script_params(script_names, params_dict, key_prefix, variables):
     for script_name in script_names:
         params = params_dict.setdefault(script_name, [])
 
-        with st.expander(f"Parameters for `{script_name}` ({len(params)})"):
+        with st.expander(f"Parameters for `{script_name}`", expanded=True):
             st.caption("Leave **Name** empty for a positional argument. Fill it in to pass "
                        "the value as an environment variable instead.")
 
@@ -181,8 +180,8 @@ def render_script_params(script_names, params_dict, key_prefix, variables):
                         params.pop(pi)
                         st.rerun()
 
-                if env_name and not re.fullmatch(r"[A-Z_][A-Z0-9_]*", env_name):
-                    st.error(f"`{env_name}`: use UPPERCASE letters, digits and `_`, "
+                if env_name and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", env_name):
+                    st.error(f"`{env_name}`: use letters, digits and `_`, "
                              "not starting with a digit.")
                 params[pi] = f"{env_name}={value}" if env_name else value
 
@@ -372,23 +371,16 @@ def render():
     # ══════════════════════════════════════════════════════════════════════
     st.subheader("4. Unity Catalog configuration")
 
-    has_existing_catalog = st.radio(
-        "Does your pipeline use an existing Unity Catalog namespace?",
-        options=["Yes", "No"], horizontal=True, key="has_existing_catalog")
-
-    uc_catalog = uc_schema = uc_volume = ""
-    if has_existing_catalog == "Yes":
-        st.caption("Catalog (top-level) → Schema (grouping) → Volume (file storage). "
-                   "One volume holds all pipeline data; subfolders separate the layers.")
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            uc_catalog = st.text_input("Catalog *", placeholder="e.g. etl_cms")
-        with c2:
-            uc_schema = st.text_input("Schema *", placeholder="e.g. ohdsi_cdm")
-        with c3:
-            uc_volume = st.text_input("Volume *", placeholder="e.g. ohdsi_volume")
-    else:
-        st.caption("Orion will scaffold new Catalog, Schema, and Volume names from your project name.")
+    st.caption("Catalog (top-level) → Schema (grouping) → Volume (file storage). "
+               "One volume holds all pipeline data; subfolders separate the layers. "
+               "Use existing names or new ones — anything missing is created when the job starts.")
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        uc_catalog = st.text_input("Catalog *", placeholder="e.g. etl_cms")
+    with c2:
+        uc_schema = st.text_input("Schema *", placeholder="e.g. ohdsi_cdm")
+    with c3:
+        uc_volume = st.text_input("Volume *", placeholder="e.g. ohdsi_volume")
 
     st.markdown("**Volumes and folders**")
     st.caption("Declare every folder the pipeline reads from or writes to, including ones "
@@ -441,19 +433,28 @@ def render():
 
     NEW_FOLDER = "+ New folder…"
 
+    def known_folders():
+        """Every folder named so far: Section 4, layer input folders, layer output folders."""
+        names = [f["subfolder"] for f in st.session_state.folders]
+        for _l in st.session_state.layers:
+            names += [i.get("subfolder") or "" for i in _l["inputs"] if i["kind"] == "folder"]
+            if _l["destination"]["type"] == "volume":
+                names.append(_l["destination"].get("subfolder") or "")
+        return list(dict.fromkeys(n.strip() for n in names if n and n.strip()))
+
     def folder_picker(label, current, key):
-        """Pick a folder declared in Section 4, or define a new one here."""
-        declared = [f["subfolder"].strip() for f in st.session_state.folders if f["subfolder"].strip()]
+        """Pick any folder already named anywhere in the form, or define a new one here."""
+        declared = known_folders()
         options = declared + [NEW_FOLDER]
         current = (current or "").strip()
         if current in declared:
             index = declared.index(current)
         elif current:
-            index = len(options) - 1          # existing name not in Section 4 -> "new"
+            index = len(options) - 1          # unknown name -> "new"
         else:
             index = None                       # nothing chosen yet
         pick = st.selectbox(label, options, index=index, key=f"{key}_pick",
-                            placeholder="Select a folder from Section 4, or create a new one")
+                            placeholder="Select a folder, or create a new one")
         if pick == NEW_FOLDER:
             name = st.text_input("New folder name", value="" if current in declared else current,
                                  key=f"{key}_new").strip()
@@ -577,31 +578,6 @@ def render():
                     })
                     st.rerun()
 
-            # ── ENTRY POINT ──
-            st.markdown("**Entry point**")
-            if locked:
-                st.text_input("Entry point", value=layer["entry_path"], disabled=True,
-                              key=f"entry_{lid}", label_visibility="collapsed")
-            else:
-                choices = [NO_ENTRY] + runnable_files
-                cur = layer.get("entry") or NO_ENTRY
-                pick = st.selectbox(
-                    "Entry point", choices, index=choices.index(cur) if cur in choices else 0,
-                    key=f"entry_{lid}", label_visibility="collapsed")
-                layer["entry"] = "" if pick == NO_ENTRY else pick
-                if not runnable_files:
-                    st.caption("Upload .py or .sql scripts in Section 1 to choose one here.")
-
-            # ── PARAMETERS ──
-            entry = layer.get("entry")
-            if entry and entry.endswith(".sql"):
-                st.markdown("**Parameters**")
-                st.caption(f"Passed automatically: catalog `{uc_catalog or '(not set)'}`, "
-                           f"schema `{uc_schema or '(not set)'}`.")
-            elif entry:
-                render_script_params([entry], {entry: layer["params"]},
-                                     key_prefix=f"params_{lid}", variables=variables)
-
             # ── DESTINATION ──
             dest = layer["destination"]
             st.markdown("**Destination**")
@@ -637,6 +613,33 @@ def render():
                     dest["tables"] = []
                 if runs_after:
                     st.caption("Runs after: " + ", ".join(f"`{n}`" for n in runs_after))
+
+            # ── SCRIPT TO RUN ──
+            st.markdown("**Script to run**")
+            if locked:
+                st.text_input("Script to run", value=layer["entry_path"], disabled=True,
+                              key=f"entry_{lid}", label_visibility="collapsed")
+            else:
+                choices = [NO_ENTRY] + runnable_files
+                cur = layer.get("entry") or NO_ENTRY
+                pick = st.selectbox(
+                    "Script to run", choices, index=choices.index(cur) if cur in choices else 0,
+                    key=f"entry_{lid}", label_visibility="collapsed")
+                layer["entry"] = "" if pick == NO_ENTRY else pick
+                if not runnable_files:
+                    st.caption("Upload .py or .sql scripts in Section 1 to choose one here.")
+
+            # ── PARAMETERS ──
+            entry = layer.get("entry")
+            if entry and entry.endswith(".sql"):
+                st.caption(f"Passed automatically: catalog `{uc_catalog or '(not set)'}`, "
+                           f"schema `{uc_schema or '(not set)'}`. If the SQL loads files with "
+                           "`\\COPY`, add a parameter named `data_dir` set to the folder they're in.")
+                render_script_params([entry], {entry: layer["params"]},
+                                     key_prefix=f"params_{lid}", variables=variables)
+            elif entry:
+                render_script_params([entry], {entry: layer["params"]},
+                                     key_prefix=f"params_{lid}", variables=variables)
 
 
     st.markdown("**Gold table definitions**")
@@ -720,8 +723,9 @@ def render():
     # ══════════════════════════════════════════════════════════════════════
     required = {
         "Project name": project_name,
-        **({"Catalog": uc_catalog, "Schema": uc_schema, "Volume": uc_volume}
-           if has_existing_catalog == "Yes" else {}),
+        "Catalog":               uc_catalog,
+        "Schema":                uc_schema,
+        "Volume":                uc_volume,
         "At least one language": "ok" if selected_languages else "",
         "Source code":           "ok" if st.session_state.src_files else "",
         "Workspace URL":         workspace_url,

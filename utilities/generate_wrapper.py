@@ -40,7 +40,7 @@ def produce_wrapper(stage: dict, wrapper_depth: int) -> str | None:
 
     file_name  = entry.get("file", script_path)
     stage_name = stage.get("name", "unnamed")
-    repo_root  = "Path(__file__)" + ".parent" * (wrapper_depth + 1)
+    repo_root  = "_HERE" + ".parent" * (wrapper_depth + 1)
 
     if file_name.endswith(".py"):
         return _PY_TEMPLATE.format(
@@ -95,12 +95,20 @@ def write_all_wrappers(spec: dict, output_dir, wrapper_prefix: str, wrapper_dept
 
 def produce_preflight_wrapper(wrapper_depth: int) -> str:
     """Source of run_orion_preflight.py — the Databricks starter for preflight_validator.preflight()."""
-    return _PREFLIGHT_TEMPLATE.format(repo_root="Path(__file__)" + ".parent" * (wrapper_depth + 1))
+    return _PREFLIGHT_TEMPLATE.format(repo_root="_HERE" + ".parent" * (wrapper_depth + 1))
 # ── Templates ────────────────────────────────────────────────────────────────
 
 _PY_TEMPLATE = '''"""Wrapper for stage: {stage_name} — entry-point: {script_file}"""
 import os, re, subprocess, sys
 from pathlib import Path
+
+# Databricks serverless runs this file with exec(), where __file__ isn't set.
+# The compiled code still knows its own file name, so fall back to that.
+try:
+    _HERE = Path(__file__)
+except NameError:
+    import inspect
+    _HERE = Path(inspect.currentframe().f_code.co_filename)
 
 _REPO_ROOT = {repo_root}
 _SCRIPT = _REPO_ROOT / "{script_path}"
@@ -135,9 +143,21 @@ if orion_inputs or orion_output:
 
 # ── NAME=value parameters become environment variables; the rest are CLI args ──
 env  = dict(os.environ)
+
+# Let the script import its sibling modules however it does locally: `import constants`
+# (its own folder) or `from python_etl.constants import ...` (a folder above). Every
+# folder from the script's own up to, not including, the repo root goes on PYTHONPATH.
+_paths, _d = [], _SCRIPT.parent
+while _d != _REPO_ROOT and _REPO_ROOT in _d.parents:
+    _paths.append(str(_d))
+    _d = _d.parent
+if env.get("PYTHONPATH"):
+    _paths.append(env["PYTHONPATH"])
+env["PYTHONPATH"] = os.pathsep.join(_paths)
+
 args = []
 for a in rest:
-    m = re.match(r"^([A-Z_][A-Z0-9_]*)=(.*)$", a)
+    m = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", a)
     if m:
         env[m.group(1)] = m.group(2)
     else:
@@ -155,6 +175,14 @@ if orion_output:
 _SQL_TEMPLATE = '''"""Wrapper for stage: {stage_name} — entry-point: {sql_file}"""
 import sys
 from pathlib import Path
+
+# Databricks serverless runs this file with exec(), where __file__ isn't set.
+# The compiled code still knows its own file name, so fall back to that.
+try:
+    _HERE = Path(__file__)
+except NameError:
+    import inspect
+    _HERE = Path(inspect.currentframe().f_code.co_filename)
 
 _REPO_ROOT = {repo_root}
 sys.path.insert(0, str(_REPO_ROOT))          # so `utilities` imports on Databricks
@@ -197,9 +225,16 @@ if len(rest) < 2:
     sys.exit("usage: <wrapper> <catalog> <schema>")
 catalog = rest[0]
 schema  = rest[1]
+# Any further NAME=value parameters are handed to the translator (e.g. data_dir for \\COPY)
+params  = dict(a.split("=", 1) for a in rest[2:] if "=" in a)
 
-results    = translate(read_sql_file(_SQL_PATH), read="postgres", dialect="databricks")
+results    = translate(read_sql_file(_SQL_PATH), read="postgres", dialect="databricks", params=params)
+for item in results:
+    if item["unsupported_reason"]:
+        print(f"skipped: {{item['unsupported_reason']}} -- {{item['sql'][:80]}}")
 statements = [item["sql"] for item in results if not item["unsupported_reason"]]
+if not statements:
+    sys.exit("Nothing to run: every statement in this SQL file was skipped (reasons above).")
 
 summary = execute_statements(statements, catalog=catalog, schema=schema)
 if summary["failed"]:
@@ -212,21 +247,33 @@ if orion_output:
         sys.exit(f"Orion check failed after running the script:\\n{{e}}")
 '''
 
-_PREFLIGHT_TEMPLATE = '''"""Orion preflight — checks the catalog, schema and volumes exist; creates missing ones."""
+_PREFLIGHT_TEMPLATE = '''"""Orion preflight — checks the catalog, schema, volumes and folders exist; creates missing ones."""
 import sys
 from pathlib import Path
+
+# Databricks serverless runs this file with exec(), where __file__ isn't set.
+# The compiled code still knows its own file name, so fall back to that.
+try:
+    _HERE = Path(__file__)
+except NameError:
+    import inspect
+    _HERE = Path(inspect.currentframe().f_code.co_filename)
 
 sys.path.insert(0, str({repo_root}))        # so `validation` and `utilities` import on Databricks
 
 from pyspark.sql import SparkSession
 from validation.preflight_validator import preflight, ValidationError
 
-if len(sys.argv) < 4:
-    sys.exit("usage: <wrapper> <catalog> <schema> <volume> [<volume> ...]")
-catalog, schema, *volumes = sys.argv[1:]
+# ORION_FOLDER=<path> parameters are folders to create; everything else is catalog, schema, volumes
+folders = [a[len("ORION_FOLDER="):] for a in sys.argv[1:] if a.startswith("ORION_FOLDER=")]
+names   = [a for a in sys.argv[1:] if not a.startswith("ORION_FOLDER=")]
+if len(names) < 3:
+    sys.exit("usage: <wrapper> <catalog> <schema> <volume> [<volume> ...] [ORION_FOLDER=<path> ...]")
+catalog, schema, *volumes = names
 
 try:
-    preflight(SparkSession.builder.getOrCreate(), catalog, schema, volumes, platform="databricks")
+    preflight(SparkSession.builder.getOrCreate(), catalog, schema, volumes,
+              platform="databricks", folders=folders)
 except ValidationError as e:
     sys.exit(f"preflight failed: {{e}}")
 '''

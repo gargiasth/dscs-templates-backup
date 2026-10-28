@@ -21,6 +21,7 @@ sync-repos.ps1
 snowflake-template/
 sandbox/
 snowflake/CMS SynPUF ETL/utils_snowflake/generate_procedure.py
+
 # Other ignored files
 node_modules/
 *.zip
@@ -33,3 +34,6 @@ test-results/
 playwright-report/
 test-executions.csv
 tests/.codegen-tmp-*.js
+
+#local runs
+databricks_local/

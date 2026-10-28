@@ -3,7 +3,8 @@ snowflake-connector-python
 snowflake-snowpark-python
 sqlglot
 
-
+pyspark
+Fakespark
 
 # Tests
 

@@ -1,4 +1,4 @@
-"""Tests for validation/validation.py — no real Spark; FakeSpark simulates the workspace."""
+"""Tests for validation/preflight_validator.py — no real Spark; FakeSpark simulates the workspace."""
 
 import pytest
 
@@ -108,7 +108,41 @@ def test_unknown_platform_is_refused():
 def test_platform_sql_has_every_step():
     # guards the agnostic design: a new platform entry must fill in every step
     from validation.preflight_validator import _PLATFORMS
-    steps = {"quote", "words", "show_catalog", "create_catalog", "use_catalog",
+    steps = {"quote", "words", "write_privilege", "show_catalog", "create_catalog", "use_catalog",
              "show_schema", "create_schema", "use_schema", "show_volume", "create_volume"}
     for name, sql in _PLATFORMS.items():
         assert steps <= set(sql), f"{name} is missing {steps - set(sql)}"
+
+
+def test_use_schema_is_a_single_name():
+    # Unity Catalog rejects `USE SCHEMA cat.schema` (UC_INVALID_NAMESPACE); the catalog comes from USE CATALOG
+    spark = FakeSpark(catalogs={"c"}, schemas={"s"}, volumes={"v"})
+    preflight(spark, "c", "s", ["v"])
+    assert "USE CATALOG `c`" in spark.calls and "USE SCHEMA `s`" in spark.calls
+    assert spark.calls.index("USE CATALOG `c`") < spark.calls.index("USE SCHEMA `s`")
+
+
+# ── Folders inside volumes ───────────────────────────────────────────────────
+
+def test_missing_folders_are_created(tmp_path):
+    spark = FakeSpark(catalogs={"c"}, schemas={"s"}, volumes={"v"})
+    a, b = tmp_path / "v" / "control", tmp_path / "v" / "omop_tables"
+    preflight(spark, "c", "s", ["v"], folders=[str(a), str(b), str(a)])
+    assert a.is_dir() and b.is_dir()
+
+
+def test_existing_folder_is_left_alone(tmp_path, caplog):
+    keep = tmp_path / "raw_data"; keep.mkdir(); (keep / "x.csv").write_text("a\n1\n")
+    with caplog.at_level("INFO"):
+        preflight(FakeSpark(catalogs={"c"}, schemas={"s"}, volumes={"v"}), "c", "s", ["v"], folders=[str(keep)])
+    assert (keep / "x.csv").exists() and "found folder" in caplog.text
+
+
+def test_folder_permission_names_the_privilege(tmp_path, monkeypatch):
+    import os
+    def deny(*a, **k):
+        raise PermissionError("denied")
+    monkeypatch.setattr(os, "makedirs", deny)
+    with pytest.raises(ValidationError, match="WRITE VOLUME on the volume"):
+        preflight(FakeSpark(catalogs={"c"}, schemas={"s"}, volumes={"v"}), "c", "s", ["v"],
+                  folders=[str(tmp_path / "nope")])

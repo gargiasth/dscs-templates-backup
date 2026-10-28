@@ -1,6 +1,6 @@
 {
   "apiVersion": "orion/v1",
-  "project": "etl-cms-ohdsi",
+  "project": "etl_cms_ohdsi_test",
   "platform": "databricks",
   "runtime": {
     "languages": [
@@ -14,12 +14,12 @@
       }
     ],
     "orchestrator": "databricks_jobs",
-    "workspace_url": "https://adb-1234567890.12.azuredatabricks.net"
+    "workspace_url": "https://1234.cloud.databricks.com"
   },
   "unity_catalog": {
-    "catalog": "etl_cms",
-    "schema": "ohdsi_cdm",
-    "volume": "ohdsi_volume",
+    "catalog": "etl_cms_test",
+    "schema": "ohdsi_cdm_test",
+    "volume": "ohdsi_volume_test",
     "ddl_files": [
       "src/CMS SynPUF ETL/SQL/create_CDMv5_tables.sql"
     ],
@@ -66,12 +66,12 @@
     ],
     "folders": [
       {
-        "volume": "ohdsi_volume",
-        "subfolder": "control"
+        "volume": "ohdsi_volume_test",
+        "subfolder": "omopt_tables"
       },
       {
-        "volume": "ohdsi_volume",
-        "subfolder": "tmp"
+        "volume": "ohdsi_volume_test",
+        "subfolder": "control"
       }
     ]
   },
@@ -87,63 +87,77 @@
       },
       "destination": {
         "type": "tables",
-        "catalog": "etl_cms",
-        "schema": "ohdsi_cdm"
+        "catalog": "etl_cms_test",
+        "schema": "ohdsi_cdm_test"
       }
     },
     {
-      "name": "bronze",
+      "name": "get_data",
       "layer": "bronze",
       "sources": [],
       "entry_point": {
         "file": "get_synpuf_files.py",
         "path": "src/CMS SynPUF ETL/scripts/get_synpuf_files.py",
-        "parameters": []
+        "parameters": [
+          "${var.bronze_subfolder_path}",
+          "1"
+        ]
       },
       "destination": {
         "type": "volume",
-        "subfolder_name": "synpuf_raw"
+        "subfolder_name": "bronze"
       }
     },
     {
-      "name": "silver",
+      "name": "etl",
       "layer": "silver",
       "sources": [
         {
           "data_upload_type": "auto",
-          "from": "bronze"
+          "from": "get_data"
         }
       ],
       "entry_point": {
         "file": "CMS_SynPuf_ETL_CDM_v5.py",
         "path": "src/CMS SynPUF ETL/python_etl/CMS_SynPuf_ETL_CDM_v5.py",
         "parameters": [
-          "TEST=${var.synpuf_raw_subfolder_path}"
+          "1",
+          "BASE_SYNPUF_INPUT_DIRECTORY=${var.bronze_subfolder_path}",
+          "BASE_OUTPUT_DIRECTORY=${var.silver_subfolder_path}",
+          "BASE_ETL_CONTROL_DIRECTORY=${var.control_subfolder_path}",
+          "BASE_OMOP_INPUT_DIRECTORY=${var.omopt_tables_subfolder_path}",
+          "SYNPUF_DIR_FORMAT=DE_{0}"
         ]
       },
       "destination": {
         "type": "volume",
-        "subfolder_name": "silver_output"
+        "subfolder_name": "silver"
       }
     },
     {
-      "name": "gold",
+      "name": "load_to_tables",
       "layer": "gold",
       "sources": [
         {
           "data_upload_type": "auto",
-          "from": "silver"
+          "from": "etl"
         },
         {
           "data_upload_type": "auto",
           "from": "table_setup"
         }
       ],
-      "entry_point": "entry_point_default",
+      "entry_point": {
+        "file": "load_CDMv5_synpuf.sql",
+        "path": "src/CMS SynPUF ETL/SQL/load_CDMv5_synpuf.sql",
+        "parameters": [
+          "data_dir=${var.silver_subfolder_path}"
+        ]
+      },
       "destination": {
         "type": "tables",
-        "catalog": "etl_cms",
-        "schema": "ohdsi_cdm",
+        "catalog": "etl_cms_test",
+        "schema": "ohdsi_cdm_test",
         "tables": [
           "concept",
           "vocabulary",
@@ -188,5 +202,5 @@
       }
     }
   ],
-  "generated": "2026-10-21"
+  "generated": "2026-10-28"
 }

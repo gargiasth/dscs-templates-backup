@@ -205,10 +205,12 @@ def _check_entry_point(entry, where, report, repo_root=None) -> None:
 
     # Only look on disk when we were told where to look and the path is usable.
     if repo_root is not None and path and str(file).endswith(ENTRY_EXTS):
-        _check_entry_file(Path(repo_root) / str(path), f"{where}.entry_point.path", report)
+        named = dict(p.split("=", 1) for p in params if isinstance(p, str) and "=" in p) \
+            if isinstance(params, list) else {}
+        _check_entry_file(Path(repo_root) / str(path), f"{where}.entry_point.path", report, named)
 
 
-def _check_entry_file(full_path: Path, where, report) -> None:
+def _check_entry_file(full_path: Path, where, report, params=None) -> None:
     """The entry-point file exists, is a file, is readable text, and (.py) parses."""
     if not full_path.exists():
         report.error(where, f"file not found: {full_path}")
@@ -230,18 +232,19 @@ def _check_entry_file(full_path: Path, where, report) -> None:
         except SyntaxError as e:
             report.error(where, f"syntax error at line {e.lineno}: {e.msg}")
     elif full_path.suffix == ".sql":
-        _check_sql(text, where, report)
+        _check_sql(text, where, report, params=params)
 
 
-def _check_sql(text, where, report, platform: str = SQL_TARGET) -> None:
+def _check_sql(text, where, report, platform: str = SQL_TARGET, params=None) -> None:
     """Translate the file the same way the SQL wrapper will, and look at the result.
 
     platform: the target the SQL will run on ("databricks" or "snowflake").
+    params:   the stage's NAME=value parameters, as the wrapper will pass them.
     """
     from utilities.sql_translate import translate   # imported here: pulls in sqlglot
 
     try:
-        results = translate(text, read=SQL_READ, dialect=platform)
+        results = translate(text, read=SQL_READ, dialect=platform, params=params)
     except Exception as e:                           # sqlglot raises several types
         report.error(where, f"SQL could not be translated: {e}")
         return
@@ -282,7 +285,7 @@ def _check_var_refs(spec, report) -> None:
                 report.error(where, f"{param!r} has a malformed variable reference; "
                                     f"use ${{var.name}}")
 
-            value = param.split("=", 1)[1] if re.match(r"^[A-Z_][A-Z0-9_]*=", param) else param
+            value = param.split("=", 1)[1] if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", param) else param
             for var, info in declared.items():
                 default = str(info.get("default", ""))
                 if default.startswith("/Volumes/") and (value == default or value.startswith(default + "/")):

@@ -16,6 +16,8 @@ Writes to:
 """
 
 import logging
+from pathlib import Path
+
 import yaml
 
 from utilities.emitter_helpers import (
@@ -24,6 +26,7 @@ from utilities.emitter_helpers import (
     _task_key,
     _collect_variables,
     _preflight_params,
+    _io_params,
     PREFLIGHT_KEY,
 )
 from utilities.logger import setup_logging
@@ -80,7 +83,7 @@ def _collect_tasks(spec: dict, env_key: str, wrapper_dir: str, wrapper_prefix: s
 
         task, key = _build_task(
             file           = entry["file"],
-            params         = list(entry.get("parameters", [])),
+            params         = list(entry.get("parameters", [])) + _io_params(spec, stage),
             layer          = slayer,
             stage_name     = sname,
             env_key        = env_key,
@@ -112,8 +115,35 @@ def _add_preflight(spec, tasks, env_key, wrapper_dir, wrapper_prefix) -> list[di
     return [preflight] + tasks
 
 
-def build_jobs_yml(spec: dict, wrapper_dir: str, wrapper_prefix: str) -> str:
-    """Assemble resources/<project>_job.yml content from the Orion spec."""
+ORION_DEPENDENCIES = ["sqlglot"]       # what Orion's own wrappers import (SQL translation)
+
+
+def _read_requirements(path) -> list[str]:
+    """Package lines from a requirements.txt: no comments, blanks, or pip options (-r, -e, --index-url)."""
+    path = Path(path)
+    if not path.is_file():
+        log.warning("%s not found; the job environment gets only Orion's own packages", path)
+        return []
+    packages = []
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.startswith("-"):
+            log.warning("%s: skipped pip option %r (not supported in a job environment)", path, line)
+            continue
+        packages.append(line)
+    log.info("read %d package(s) from %s", len(packages), path)
+    return packages
+
+
+def build_jobs_yml(spec: dict, wrapper_dir: str, wrapper_prefix: str,
+                   requirements_path=None) -> str:
+    """Assemble resources/<project>_job.yml content from the Orion spec.
+
+    requirements_path: a requirements.txt whose packages the job environment
+    installs. Orion's own (ORION_DEPENDENCIES) are always included; repeats are dropped.
+    """
 
     if "project" not in spec:
         raise ValueError("spec missing required field: 'project'")
@@ -121,6 +151,7 @@ def build_jobs_yml(spec: dict, wrapper_dir: str, wrapper_prefix: str) -> str:
     log.info("building jobs yml for project %r", spec["project"])
 
     env_key = "default_env"
+    packages = _read_requirements(requirements_path) if requirements_path else []
     tasks = _collect_tasks(spec, env_key, wrapper_dir, wrapper_prefix)
     tasks = _add_preflight(spec, tasks, env_key, wrapper_dir, wrapper_prefix)
 
@@ -130,7 +161,7 @@ def build_jobs_yml(spec: dict, wrapper_dir: str, wrapper_prefix: str) -> str:
             "environment_key": env_key,
             "spec": {
                 "client": "3",            # TBD — not in intake yet
-                "dependencies": [],       # TBD — not in intake yet
+                "dependencies": list(dict.fromkeys(ORION_DEPENDENCIES + packages)),
             },
         }],
         "tasks": tasks,

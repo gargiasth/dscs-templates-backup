@@ -32,7 +32,6 @@ from utilities.databricks_yml_emitter import build_databricks_yml
 from utilities.databricks_jobs_emitter import build_jobs_yml
 from validation.spec_validator import validate_spec, SpecValidationError
 from validation.databricks_bundle_validator import validate_bundle, BundleValidationError
-from validation.databricks_bundle_validator import validate_bundle, BundleValidationError
 
 setup_logging()
 log = logging.getLogger(__name__)
@@ -41,7 +40,7 @@ log = logging.getLogger(__name__)
 # ── Paths ────────────────────────────────────────────────────────────────────
 # Inputs: defaults used when the caller doesn't pass spec_path / output_dir.
 DEFAULT_SPEC_PATH  = Path("tests/test_data/sample_OrionConfig.json")
-DEFAULT_OUTPUT_DIR = Path("tests/test_output")
+DEFAULT_OUTPUT_DIR = Path("databricks")
 
 # Bundle layout: relative to output_dir.
 DATABRICKS_YML_NAME = "databricks.yml"
@@ -146,7 +145,9 @@ def _emit_databricks_yml(spec: dict, output_dir: Path) -> Path:
 def _emit_jobs_yml(spec: dict, output_dir: Path) -> Path:
     # Wrapper dir as seen from the jobs YAML, e.g. ../utilities/wrappers
     wrapper_ref = PurePosixPath(*[".."] * len(RESOURCES_DIR.parts), *WRAPPER_DIR.parts).as_posix()
-    jobs_content = build_jobs_yml(spec, wrapper_dir=wrapper_ref, wrapper_prefix=WRAPPER_PREFIX)
+    # Job environment packages come from the repo root's requirements.txt
+    jobs_content = build_jobs_yml(spec, wrapper_dir=wrapper_ref, wrapper_prefix=WRAPPER_PREFIX,
+                                  requirements_path=Path.cwd() / "requirements.txt")
     jobs_path = output_dir / RESOURCES_DIR / JOBS_YML_NAME
     jobs_path.parent.mkdir(parents=True, exist_ok=True)
     jobs_path.write_text(jobs_content, encoding="utf-8")
